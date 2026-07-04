@@ -31,11 +31,14 @@ main() {
 
   printf("drivers:");
   if (gpuinfo_driver_available(info, gpuinfo_driver_vulkan)) printf(" vulkan");
-  if (gpuinfo_driver_available(info, gpuinfo_driver_metal)) printf(" metal");
   if (gpuinfo_driver_available(info, gpuinfo_driver_opencl)) printf(" opencl");
   if (gpuinfo_driver_available(info, gpuinfo_driver_opengl)) printf(" opengl");
+  if (gpuinfo_driver_available(info, gpuinfo_driver_webgpu)) printf(" webgpu");
+  if (gpuinfo_driver_available(info, gpuinfo_driver_video)) printf(" video");
+  if (gpuinfo_driver_available(info, gpuinfo_driver_metal)) printf(" metal");
+  if (gpuinfo_driver_available(info, gpuinfo_driver_direct3d11)) printf(" direct3d11");
+  if (gpuinfo_driver_available(info, gpuinfo_driver_direct3d12)) printf(" direct3d12");
   if (gpuinfo_driver_available(info, gpuinfo_driver_cuda)) printf(" cuda");
-  if (gpuinfo_driver_available(info, gpuinfo_driver_direct3d)) printf(" direct3d");
   if (gpuinfo_driver_available(info, gpuinfo_driver_level_zero)) printf(" level-zero");
   if (gpuinfo_driver_available(info, gpuinfo_driver_rocm)) printf(" rocm");
   printf("\n");
@@ -56,13 +59,30 @@ main() {
     assert(err == 0);
 
     printf(
-      "  [%zu] %s (%s), %s, %llu MiB\n",
+      "  [%zu] %s (%s), %s, %s%llu MiB\n",
       i,
       gpu.name,
       gpu.vendor,
       type_name(gpu.type),
+      gpu.unified_memory ? "unified, " : "",
       (unsigned long long) (gpu.memory / (1024 * 1024))
     );
+
+    printf(
+      "      pci: %04x:%04x (subsystem %08x, rev %02x)\n",
+      gpu.vendor_id,
+      gpu.device_id,
+      gpu.subsystem_id,
+      gpu.revision
+    );
+
+    if (gpu.driver_name[0] != '\0' || gpu.driver_version[0] != '\0') {
+      printf(
+        "      driver: %s %s\n",
+        gpu.driver_name[0] != '\0' ? gpu.driver_name : "?",
+        gpu.driver_version[0] != '\0' ? gpu.driver_version : "?"
+      );
+    }
 
     printf(
       "      compute: %.1f%%, memory: %llu / %llu MiB\n",
@@ -70,6 +90,22 @@ main() {
       (unsigned long long) (usage.memory_used / (1024 * 1024)),
       (unsigned long long) (usage.memory_total / (1024 * 1024))
     );
+
+    if (usage.encode >= 0 || usage.decode >= 0) {
+      printf(
+        "      encode: %.1f%%, decode: %.1f%%\n",
+        usage.encode < 0 ? 0.0 : usage.encode * 100.0,
+        usage.decode < 0 ? 0.0 : usage.decode * 100.0
+      );
+    }
+
+    if (usage.power >= 0 || usage.temperature >= 0) {
+      printf(
+        "      power: %.1f W, temperature: %.1f C\n",
+        usage.power < 0 ? 0.0 : usage.power,
+        usage.temperature < 0 ? 0.0 : usage.temperature
+      );
+    }
   }
 
   // Out-of-range access must fail rather than crash.

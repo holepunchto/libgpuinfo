@@ -29,10 +29,14 @@
 typedef struct gpuinfo_pdh_s gpuinfo_pdh_t;
 
 // The cached utilization of a single adapter. Defined at file scope rather than
-// nested so that its type is unambiguous when compiled as C++.
+// nested so that its type is unambiguous when compiled as C++. Compute is the
+// busiest engine type; encode and decode are the dedicated video engines,
+// broken out separately.
 typedef struct {
   LUID luid;
   double compute;
+  double encode;
+  double decode;
 } gpuinfo_pdh_result_t;
 
 // A working entry summing utilization by engine type for one adapter while a
@@ -42,6 +46,8 @@ typedef struct {
   uint32_t keys[GPUINFO_PDH_MAX_ENGINES];
   double sums[GPUINFO_PDH_MAX_ENGINES];
   unsigned length;
+  double encode;
+  double decode;
 } gpuinfo_pdh_work_t;
 
 struct gpuinfo_pdh_s {
@@ -110,6 +116,39 @@ gpuinfo_pdh__engine_hash(const wchar_t *name) {
   return hash;
 }
 
+// Report whether the engine type suffix of a counter instance name contains the
+// given lowercase fragment, matched case-insensitively. The video engines are
+// named "engtype_VideoEncode" and "engtype_VideoDecode".
+static bool
+gpuinfo_pdh__engine_contains(const wchar_t *name, const wchar_t *needle) {
+  const wchar_t *p = wcsstr(name, L"engtype_");
+
+  if (p == NULL) return false;
+
+  p += 8;
+
+  for (; *p != L'\0'; p++) {
+    const wchar_t *a = p;
+    const wchar_t *b = needle;
+
+    while (*b != L'\0') {
+      wchar_t ca = *a;
+      wchar_t cb = *b;
+
+      if (ca >= L'A' && ca <= L'Z') ca += L'a' - L'A';
+
+      if (ca != cb) break;
+
+      a++;
+      b++;
+    }
+
+    if (*b == L'\0') return true;
+  }
+
+  return false;
+}
+
 // Collect the GPU engine counters and recompute the cached utilization of every
 // adapter observed. Utilization is taken as the busiest engine type, summed
 // across processes.
@@ -161,8 +200,20 @@ gpuinfo_pdh__refresh(gpuinfo_pdh_t *pdh) {
 
         work[w].luid = luid;
         work[w].length = 0;
+        work[w].encode = 0;
+        work[w].decode = 0;
 
         work_count++;
+      }
+
+      double value = items[i].FmtValue.doubleValue;
+
+      // Accumulate the video engines separately so that encode and decode
+      // utilization can be reported alongside overall compute.
+      if (gpuinfo_pdh__engine_contains(items[i].szName, L"encode")) {
+        work[w].encode += value;
+      } else if (gpuinfo_pdh__engine_contains(items[i].szName, L"decode")) {
+        work[w].decode += value;
       }
 
       uint32_t key = gpuinfo_pdh__engine_hash(items[i].szName);
@@ -182,7 +233,7 @@ gpuinfo_pdh__refresh(gpuinfo_pdh_t *pdh) {
         work[w].length++;
       }
 
-      work[w].sums[j] += items[i].FmtValue.doubleValue;
+      work[w].sums[j] += value;
     }
 
     if (work_count > pdh->capacity) {
@@ -205,8 +256,13 @@ gpuinfo_pdh__refresh(gpuinfo_pdh_t *pdh) {
 
       if (best > 100) best = 100;
 
+      double encode = work[w].encode > 100 ? 100 : work[w].encode;
+      double decode = work[w].decode > 100 ? 100 : work[w].decode;
+
       pdh->results[pdh->count].luid = work[w].luid;
       pdh->results[pdh->count].compute = best / 100.0;
+      pdh->results[pdh->count].encode = encode / 100.0;
+      pdh->results[pdh->count].decode = decode / 100.0;
 
       pdh->count++;
     }
@@ -241,13 +297,14 @@ gpuinfo_pdh_open(gpuinfo_pdh_t *pdh) {
   return true;
 }
 
-// Return the compute utilization of the adapter with the given LUID, in the
-// range `[0, 1]`, or a negative value if it cannot be determined. Collections
-// are throttled, so querying several adapters in quick succession reuses a
-// single collection and each observes the same sampling interval.
-static double
-gpuinfo_pdh_utilization(gpuinfo_pdh_t *pdh, LUID luid) {
-  if (!pdh->ready) return -1.0;
+// Fill the compute, encode, and decode utilization of the adapter with the
+// given LUID, each in the range `[0, 1]`, or leave a value negative if it
+// cannot be determined. Collections are throttled, so querying several adapters
+// in quick succession reuses a single collection and each observes the same
+// sampling interval.
+static void
+gpuinfo_pdh_utilization(gpuinfo_pdh_t *pdh, LUID luid, double *compute, double *encode, double *decode) {
+  if (!pdh->ready) return;
 
   ULONGLONG now = GetTickCount64();
 
@@ -258,10 +315,14 @@ gpuinfo_pdh_utilization(gpuinfo_pdh_t *pdh, LUID luid) {
   }
 
   for (size_t i = 0; i < pdh->count; i++) {
-    if (gpuinfo_pdh__luid_equal(pdh->results[i].luid, luid)) return pdh->results[i].compute;
-  }
+    if (gpuinfo_pdh__luid_equal(pdh->results[i].luid, luid)) {
+      *compute = pdh->results[i].compute;
+      *encode = pdh->results[i].encode;
+      *decode = pdh->results[i].decode;
 
-  return -1.0;
+      return;
+    }
+  }
 }
 
 static void

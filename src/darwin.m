@@ -119,6 +119,33 @@ gpuinfo__has_opengl(void) {
   return gpuinfo__dlopen_any(names);
 }
 
+static bool
+gpuinfo__has_webgpu(void) {
+  // WebGPU has no system library; detect the common native implementations,
+  // Dawn and wgpu, when an application has bundled one.
+  static const char *const names[] = {
+    "libwebgpu_dawn.dylib",
+    "libdawn_native.dylib",
+    "libwgpu_native.dylib",
+    "libwgpu.dylib",
+    NULL,
+  };
+
+  return gpuinfo__dlopen_any(names);
+}
+
+static bool
+gpuinfo__has_video(void) {
+  // VideoToolbox is the system framework for hardware video encode and decode
+  // and is backed by the GPU on all supported Macs.
+  static const char *const names[] = {
+    "/System/Library/Frameworks/VideoToolbox.framework/VideoToolbox",
+    NULL,
+  };
+
+  return gpuinfo__dlopen_any(names);
+}
+
 // Clear the vendor-specific compute APIs that do not apply to a device's
 // vendor, leaving the cross-vendor APIs untouched.
 static uint32_t
@@ -160,27 +187,58 @@ gpuinfo__accelerator_for_registry_id(uint64_t registry_id) {
   return found;
 }
 
-// Read a numeric property from an IOKit properties dictionary, walking up the
-// registry from the given service until a `vendor-id` entry is found.
-static uint32_t
-gpuinfo__vendor_id(io_service_t service) {
-  uint32_t vendor_id = 0;
+// Read a little-endian integer property from an IOKit registry node. The PCI
+// identifier properties are stored as raw `OSData` of one to four bytes.
+static bool
+gpuinfo__reg_uint(io_service_t node, CFStringRef key, uint32_t *result) {
+  CFTypeRef property = IORegistryEntryCreateCFProperty(node, key, kCFAllocatorDefault, 0);
 
+  if (property == NULL) return false;
+
+  bool found = false;
+
+  if (CFGetTypeID(property) == CFDataGetTypeID()) {
+    CFIndex length = CFDataGetLength(property);
+
+    if (length > 0 && length <= (CFIndex) sizeof(uint32_t)) {
+      uint32_t value = 0;
+
+      memcpy(&value, CFDataGetBytePtr(property), (size_t) length);
+
+      *result = value;
+
+      found = true;
+    }
+  }
+
+  CFRelease(property);
+
+  return found;
+}
+
+// Read the PCI identifiers of a device by walking up the registry from the
+// given service until a node carrying a `vendor-id` entry is found, then
+// reading the remaining identifiers from that same node.
+static void
+gpuinfo__pci_ids(io_service_t service, uint32_t *vendor_id, uint32_t *device_id, uint32_t *subsystem_id, uint32_t *revision) {
   io_service_t node = service;
 
   IOObjectRetain(node);
 
   for (int depth = 0; depth < 8 && node != 0; depth++) {
-    CFTypeRef property = IORegistryEntryCreateCFProperty(node, CFSTR("vendor-id"), kCFAllocatorDefault, 0);
+    if (gpuinfo__reg_uint(node, CFSTR("vendor-id"), vendor_id) && *vendor_id != 0) {
+      gpuinfo__reg_uint(node, CFSTR("device-id"), device_id);
+      gpuinfo__reg_uint(node, CFSTR("revision-id"), revision);
 
-    if (property != NULL) {
-      if (CFGetTypeID(property) == CFDataGetTypeID() && CFDataGetLength(property) >= (CFIndex) sizeof(uint32_t)) {
-        memcpy(&vendor_id, CFDataGetBytePtr(property), sizeof(uint32_t));
-      }
+      uint32_t subsystem_vendor = 0;
+      uint32_t subsystem_device = 0;
 
-      CFRelease(property);
+      gpuinfo__reg_uint(node, CFSTR("subsystem-vendor-id"), &subsystem_vendor);
+      gpuinfo__reg_uint(node, CFSTR("subsystem-id"), &subsystem_device);
 
-      if (vendor_id != 0) break;
+      *subsystem_id = (subsystem_vendor << 16) | (subsystem_device & 0xffff);
+
+      break;
     }
 
     io_service_t parent = 0;
@@ -195,8 +253,6 @@ gpuinfo__vendor_id(io_service_t service) {
   }
 
   if (node != 0) IOObjectRelease(node);
-
-  return vendor_id;
 }
 
 static void
@@ -206,10 +262,12 @@ gpuinfo__fill_vendor(gpuinfo_gpu_t *gpu, uint64_t registry_id, NSString *name) {
   io_service_t service = gpuinfo__accelerator_for_registry_id(registry_id);
 
   if (service != 0) {
-    vendor_id = gpuinfo__vendor_id(service);
+    gpuinfo__pci_ids(service, &vendor_id, &gpu->device_id, &gpu->subsystem_id, &gpu->revision);
 
     IOObjectRelease(service);
   }
+
+  gpu->vendor_id = vendor_id;
 
   const char *vendor = NULL;
 
@@ -297,6 +355,8 @@ gpuinfo_init(gpuinfo_t **result) {
     if (gpuinfo__has_vulkan()) drivers |= gpuinfo_driver_vulkan;
     if (gpuinfo__has_opencl()) drivers |= gpuinfo_driver_opencl;
     if (gpuinfo__has_opengl()) drivers |= gpuinfo_driver_opengl;
+    if (gpuinfo__has_webgpu()) drivers |= gpuinfo_driver_webgpu;
+    if (gpuinfo__has_video()) drivers |= gpuinfo_driver_video;
 
     info->drivers = drivers;
     info->gpu_count = devices.count;
@@ -327,6 +387,7 @@ gpuinfo_init(gpuinfo_t **result) {
 
       gpu->type = gpuinfo__device_type(device);
       gpu->memory = device.recommendedMaxWorkingSetSize;
+      gpu->unified_memory = device.hasUnifiedMemory;
 
       gpuinfo__fill_vendor(gpu, entry->registry_id, device.name);
 
@@ -384,8 +445,14 @@ gpuinfo_gpu_usage(gpuinfo_t *info, size_t index, gpuinfo_usage_t *result) {
   gpuinfo_device_t *entry = &info->gpus[index];
 
   result->compute = -1.0;
+  // Metal exposes no per-engine video utilization, power, or temperature, so
+  // these remain unknown on macOS.
+  result->encode = -1.0;
+  result->decode = -1.0;
   result->memory_used = 0;
   result->memory_total = entry->info.memory;
+  result->power = -1.0;
+  result->temperature = -1.0;
 
   io_service_t service = gpuinfo__accelerator_for_registry_id(entry->registry_id);
 

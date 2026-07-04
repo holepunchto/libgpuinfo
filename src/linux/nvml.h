@@ -37,6 +37,9 @@ typedef struct {
   unsigned int memory;
 } nvmlUtilization_t;
 
+// Sensor selector for `nvmlDeviceGetTemperature`; `0` is the GPU die.
+#define GPUINFO_NVML_TEMPERATURE_GPU 0
+
 typedef int (*nvmlInit_t)(void);
 typedef int (*nvmlShutdown_t)(void);
 typedef int (*nvmlDeviceGetCount_t)(unsigned int *);
@@ -45,6 +48,11 @@ typedef int (*nvmlDeviceGetPciInfo_t)(nvmlDevice_t, nvmlPciInfo_t *);
 typedef int (*nvmlDeviceGetName_t)(nvmlDevice_t, char *, unsigned int);
 typedef int (*nvmlDeviceGetMemoryInfo_t)(nvmlDevice_t, nvmlMemory_t *);
 typedef int (*nvmlDeviceGetUtilizationRates_t)(nvmlDevice_t, nvmlUtilization_t *);
+typedef int (*nvmlDeviceGetEncoderUtilization_t)(nvmlDevice_t, unsigned int *, unsigned int *);
+typedef int (*nvmlDeviceGetDecoderUtilization_t)(nvmlDevice_t, unsigned int *, unsigned int *);
+typedef int (*nvmlDeviceGetPowerUsage_t)(nvmlDevice_t, unsigned int *);
+typedef int (*nvmlDeviceGetTemperature_t)(nvmlDevice_t, int, unsigned int *);
+typedef int (*nvmlSystemGetDriverVersion_t)(char *, unsigned int);
 
 typedef struct gpuinfo_nvml_s gpuinfo_nvml_t;
 
@@ -56,6 +64,11 @@ struct gpuinfo_nvml_s {
   nvmlDeviceGetName_t get_name;
   nvmlDeviceGetMemoryInfo_t get_memory;
   nvmlDeviceGetUtilizationRates_t get_utilization;
+  nvmlDeviceGetEncoderUtilization_t get_encoder;
+  nvmlDeviceGetDecoderUtilization_t get_decoder;
+  nvmlDeviceGetPowerUsage_t get_power;
+  nvmlDeviceGetTemperature_t get_temperature;
+  nvmlSystemGetDriverVersion_t get_driver_version;
 
   // A cached table of the NVML devices, keyed by PCI location so that they can
   // be matched to the DRM cards enumerated from sysfs.
@@ -105,6 +118,11 @@ gpuinfo_nvml_open(gpuinfo_nvml_t *nvml) {
   nvml->get_name = (nvmlDeviceGetName_t) dlsym(lib, "nvmlDeviceGetName");
   nvml->get_memory = (nvmlDeviceGetMemoryInfo_t) dlsym(lib, "nvmlDeviceGetMemoryInfo");
   nvml->get_utilization = (nvmlDeviceGetUtilizationRates_t) dlsym(lib, "nvmlDeviceGetUtilizationRates");
+  nvml->get_encoder = (nvmlDeviceGetEncoderUtilization_t) dlsym(lib, "nvmlDeviceGetEncoderUtilization");
+  nvml->get_decoder = (nvmlDeviceGetDecoderUtilization_t) dlsym(lib, "nvmlDeviceGetDecoderUtilization");
+  nvml->get_power = (nvmlDeviceGetPowerUsage_t) dlsym(lib, "nvmlDeviceGetPowerUsage");
+  nvml->get_temperature = (nvmlDeviceGetTemperature_t) dlsym(lib, "nvmlDeviceGetTemperature");
+  nvml->get_driver_version = (nvmlSystemGetDriverVersion_t) dlsym(lib, "nvmlSystemGetDriverVersion");
 
   unsigned int count = 0;
 
@@ -164,14 +182,33 @@ gpuinfo_nvml_memory_total(const gpuinfo_nvml_t *nvml, nvmlDevice_t device) {
   return memory.total;
 }
 
+// Read the NVIDIA driver version into the given buffer. Leaves the buffer
+// untouched, so the caller should ensure it is NUL-terminated first.
+static void
+gpuinfo_nvml_driver_version(const gpuinfo_nvml_t *nvml, char *dst, size_t cap) {
+  if (nvml->get_driver_version != NULL) nvml->get_driver_version(dst, (unsigned int) cap);
+}
+
 // Read the runtime utilization of a device. Fields that cannot be determined
 // are left untouched, so the caller should initialize them first.
 static void
-gpuinfo_nvml_usage(const gpuinfo_nvml_t *nvml, nvmlDevice_t device, double *compute, uint64_t *memory_used, uint64_t *memory_total) {
+gpuinfo_nvml_usage(const gpuinfo_nvml_t *nvml, nvmlDevice_t device, double *compute, double *encode, double *decode, uint64_t *memory_used, uint64_t *memory_total, double *power, double *temperature) {
   if (nvml->get_utilization != NULL) {
     nvmlUtilization_t utilization;
 
     if (nvml->get_utilization(device, &utilization) == 0) *compute = (double) utilization.gpu / 100.0;
+  }
+
+  if (nvml->get_encoder != NULL) {
+    unsigned int utilization, sampling;
+
+    if (nvml->get_encoder(device, &utilization, &sampling) == 0) *encode = (double) utilization / 100.0;
+  }
+
+  if (nvml->get_decoder != NULL) {
+    unsigned int utilization, sampling;
+
+    if (nvml->get_decoder(device, &utilization, &sampling) == 0) *decode = (double) utilization / 100.0;
   }
 
   if (nvml->get_memory != NULL) {
@@ -181,6 +218,18 @@ gpuinfo_nvml_usage(const gpuinfo_nvml_t *nvml, nvmlDevice_t device, double *comp
       *memory_used = memory.used;
       *memory_total = memory.total;
     }
+  }
+
+  if (nvml->get_power != NULL) {
+    unsigned int milliwatts;
+
+    if (nvml->get_power(device, &milliwatts) == 0) *power = (double) milliwatts / 1000.0;
+  }
+
+  if (nvml->get_temperature != NULL) {
+    unsigned int celsius;
+
+    if (nvml->get_temperature(device, GPUINFO_NVML_TEMPERATURE_GPU, &celsius) == 0) *temperature = (double) celsius;
   }
 }
 

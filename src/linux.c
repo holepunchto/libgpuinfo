@@ -16,6 +16,13 @@
 #define GPUINFO_VENDOR_INTEL  0x8086
 #define GPUINFO_VENDOR_NVIDIA 0x10de
 
+// PCI vendor identifiers of the paravirtualized display adapters exposed by
+// common hypervisors, used to classify a device as virtual.
+#define GPUINFO_VENDOR_VIRTIO 0x1af4 // virtio-gpu
+#define GPUINFO_VENDOR_VMWARE 0x15ad // VMware SVGA
+#define GPUINFO_VENDOR_REDHAT 0x1b36 // QEMU/QXL
+#define GPUINFO_VENDOR_MSFT   0x1414 // Microsoft Hyper-V
+
 typedef struct gpuinfo_device_s gpuinfo_device_t;
 
 struct gpuinfo_device_s {
@@ -70,6 +77,91 @@ gpuinfo__read_uint(const char *dir, const char *attr, uint64_t *result) {
   *result = strtoull(value, NULL, 0);
 
   return true;
+}
+
+// Read a string from a sysfs attribute below the given device directory,
+// stripping any trailing newline. Returns `false` if the attribute is absent.
+static bool
+gpuinfo__read_string(const char *dir, const char *attr, char *dst, size_t cap) {
+  char path[512];
+
+  snprintf(path, sizeof(path), "%s/%s", dir, attr);
+
+  if (!gpuinfo__read_file(path, dst, cap)) return false;
+
+  size_t len = strlen(dst);
+
+  while (len > 0 && (dst[len - 1] == '\n' || dst[len - 1] == '\r' || dst[len - 1] == ' ')) {
+    dst[--len] = '\0';
+  }
+
+  return true;
+}
+
+// Resolve the name of the kernel driver bound to a device by reading the
+// "driver" symlink in its sysfs directory and taking its basename, e.g.
+// "amdgpu", "i915", or "nvidia".
+static void
+gpuinfo__driver_name(const char *dir, char *dst, size_t cap) {
+  char path[512];
+
+  snprintf(path, sizeof(path), "%s/driver", dir);
+
+  char target[512];
+
+  ssize_t len = readlink(path, target, sizeof(target) - 1);
+
+  if (len < 0) {
+    dst[0] = '\0';
+
+    return;
+  }
+
+  target[len] = '\0';
+
+  const char *base = strrchr(target, '/');
+
+  base = base != NULL ? base + 1 : target;
+
+  strncpy(dst, base, cap - 1);
+
+  dst[cap - 1] = '\0';
+}
+
+// Read a hwmon sensor exposed under a device's sysfs directory. Each device has
+// at most one hwmon instance, named "hwmonN" for an unpredictable N, so the
+// directory is scanned for the first match.
+static bool
+gpuinfo__read_hwmon(const char *dir, const char *file, uint64_t *result) {
+  char hwmon_dir[512];
+
+  snprintf(hwmon_dir, sizeof(hwmon_dir), "%s/hwmon", dir);
+
+  DIR *d = opendir(hwmon_dir);
+
+  if (d == NULL) return false;
+
+  bool found = false;
+
+  struct dirent *entry;
+
+  while ((entry = readdir(d)) != NULL) {
+    if (strncmp(entry->d_name, "hwmon", 5) != 0) continue;
+
+    char instance[768];
+
+    snprintf(instance, sizeof(instance), "%s/%s", hwmon_dir, entry->d_name);
+
+    if (gpuinfo__read_uint(instance, file, result)) {
+      found = true;
+
+      break;
+    }
+  }
+
+  closedir(d);
+
+  return found;
 }
 
 static bool
@@ -127,6 +219,38 @@ gpuinfo__has_level_zero(void) {
 static bool
 gpuinfo__has_rocm(void) {
   static const char *const names[] = {"libamdhip64.so", NULL};
+
+  return gpuinfo__dlopen_any(names);
+}
+
+static bool
+gpuinfo__has_webgpu(void) {
+  // WebGPU has no system library; detect the common native implementations,
+  // Dawn and wgpu, when an application has bundled one.
+  static const char *const names[] = {
+    "libwebgpu_dawn.so",
+    "libdawn_native.so",
+    "libwgpu_native.so",
+    "libwgpu.so",
+    NULL,
+  };
+
+  return gpuinfo__dlopen_any(names);
+}
+
+static bool
+gpuinfo__has_video(void) {
+  // The cross-vendor media stacks are VA-API and VDPAU; NVIDIA additionally
+  // exposes NVENC directly. Any one of them indicates hardware video support.
+  static const char *const names[] = {
+    "libva.so.2",
+    "libva.so",
+    "libvdpau.so.1",
+    "libvdpau.so",
+    "libnvidia-encode.so.1",
+    "libnvidia-encode.so",
+    NULL,
+  };
 
   return gpuinfo__dlopen_any(names);
 }
@@ -221,9 +345,20 @@ gpuinfo__fill_static(gpuinfo_device_t *entry, uint32_t drivers) {
 
   uint64_t vendor_id = 0;
   uint64_t device_id = 0;
+  uint64_t subsystem_vendor = 0;
+  uint64_t subsystem_device = 0;
+  uint64_t revision = 0;
 
   gpuinfo__read_uint(entry->path, "vendor", &vendor_id);
   gpuinfo__read_uint(entry->path, "device", &device_id);
+  gpuinfo__read_uint(entry->path, "subsystem_vendor", &subsystem_vendor);
+  gpuinfo__read_uint(entry->path, "subsystem_device", &subsystem_device);
+  gpuinfo__read_uint(entry->path, "revision", &revision);
+
+  gpu->vendor_id = (uint32_t) vendor_id;
+  gpu->device_id = (uint32_t) device_id;
+  gpu->subsystem_id = (uint32_t) ((subsystem_vendor << 16) | (subsystem_device & 0xffff));
+  gpu->revision = (uint32_t) revision;
 
   const char *vendor = NULL;
 
@@ -253,19 +388,43 @@ gpuinfo__fill_static(gpuinfo_device_t *entry, uint32_t drivers) {
     snprintf(gpu->name, sizeof(gpu->name), "%s 0x%04x", gpu->vendor[0] != '\0' ? gpu->vendor : "Unknown", (unsigned) device_id);
   }
 
-  // Integrated GPUs expose no dedicated video memory; treat Intel graphics and
-  // any adapter reporting no VRAM as integrated.
+  // Record the kernel driver, and its version where the module exposes one.
+  gpuinfo__driver_name(entry->path, gpu->driver_name, sizeof(gpu->driver_name));
+
+  if (gpu->driver_name[0] != '\0') {
+    char module_dir[512];
+
+    snprintf(module_dir, sizeof(module_dir), "/sys/module/%s", gpu->driver_name);
+
+    gpuinfo__read_string(module_dir, "version", gpu->driver_version, sizeof(gpu->driver_version));
+  }
+
+  // A device advertising dedicated video memory is discrete; one without is
+  // integrated and shares the host's memory. Vendor is deliberately not a
+  // factor, so Intel's discrete Arc parts are not forced to integrated the way
+  // its integrated graphics once were. Note that "mem_info_vram_total" is an
+  // amdgpu attribute: NVIDIA memory is instead filled in later from NVML, and
+  // Intel does not expose a comparable total, so an Intel discrete GPU may be
+  // reported as integrated with unknown memory until a better source is added.
   uint64_t vram = 0;
 
   bool has_vram = gpuinfo__read_uint(entry->path, "mem_info_vram_total", &vram);
 
   gpu->memory = vram;
 
-  if (vendor_id == GPUINFO_VENDOR_INTEL || !has_vram || vram == 0) {
-    gpu->type = gpuinfo_gpu_type_integrated;
-  } else {
-    gpu->type = gpuinfo_gpu_type_dedicated;
+  switch (vendor_id) {
+  case GPUINFO_VENDOR_VIRTIO:
+  case GPUINFO_VENDOR_VMWARE:
+  case GPUINFO_VENDOR_REDHAT:
+  case GPUINFO_VENDOR_MSFT:
+    gpu->type = gpuinfo_gpu_type_virtual;
+    break;
+  default:
+    gpu->type = (has_vram && vram > 0) ? gpuinfo_gpu_type_dedicated : gpuinfo_gpu_type_integrated;
   }
+
+  // An integrated GPU shares a single memory address space with the CPU.
+  gpu->unified_memory = gpu->type == gpuinfo_gpu_type_integrated;
 
   gpu->drivers = gpuinfo__device_drivers(drivers, gpu->vendor);
 }
@@ -319,6 +478,12 @@ gpuinfo__nvml_match(gpuinfo_t *info) {
 
   if (!present || !gpuinfo_nvml_open(&info->nvml)) return;
 
+  // The driver version is a property of the loaded kernel module and so is
+  // shared by every NVIDIA device.
+  char driver_version[GPUINFO_NAME_MAX] = {0};
+
+  gpuinfo_nvml_driver_version(&info->nvml, driver_version, sizeof(driver_version));
+
   for (size_t d = 0; d < info->gpu_count; d++) {
     gpuinfo_device_t *entry = &info->gpus[d];
 
@@ -334,8 +499,15 @@ gpuinfo__nvml_match(gpuinfo_t *info) {
 
     entry->nvml = handle;
     entry->info.type = gpuinfo_gpu_type_dedicated;
+    entry->info.unified_memory = false;
 
     gpuinfo_nvml_name(&info->nvml, handle, entry->info.name, sizeof(entry->info.name));
+
+    if (driver_version[0] != '\0') {
+      strncpy(entry->info.driver_version, driver_version, sizeof(entry->info.driver_version) - 1);
+
+      entry->info.driver_version[sizeof(entry->info.driver_version) - 1] = '\0';
+    }
 
     uint64_t memory = gpuinfo_nvml_memory_total(&info->nvml, handle);
 
@@ -354,6 +526,8 @@ gpuinfo_init(gpuinfo_t **result) {
   if (gpuinfo__has_vulkan()) drivers |= gpuinfo_driver_vulkan;
   if (gpuinfo__has_opencl()) drivers |= gpuinfo_driver_opencl;
   if (gpuinfo__has_opengl()) drivers |= gpuinfo_driver_opengl;
+  if (gpuinfo__has_webgpu()) drivers |= gpuinfo_driver_webgpu;
+  if (gpuinfo__has_video()) drivers |= gpuinfo_driver_video;
   if (gpuinfo__has_cuda()) drivers |= gpuinfo_driver_cuda;
   if (gpuinfo__has_level_zero()) drivers |= gpuinfo_driver_level_zero;
   if (gpuinfo__has_rocm()) drivers |= gpuinfo_driver_rocm;
@@ -455,17 +629,23 @@ gpuinfo_gpu_usage(gpuinfo_t *info, size_t index, gpuinfo_usage_t *result) {
   gpuinfo_device_t *entry = &info->gpus[index];
 
   result->compute = -1.0;
+  result->encode = -1.0;
+  result->decode = -1.0;
   result->memory_used = 0;
   result->memory_total = entry->info.memory;
+  result->power = -1.0;
+  result->temperature = -1.0;
 
   // NVIDIA GPUs report utilization and memory through NVML rather than sysfs.
   if (entry->nvml != NULL && info->nvml.ready) {
-    gpuinfo_nvml_usage(&info->nvml, entry->nvml, &result->compute, &result->memory_used, &result->memory_total);
+    gpuinfo_nvml_usage(&info->nvml, entry->nvml, &result->compute, &result->encode, &result->decode, &result->memory_used, &result->memory_total, &result->power, &result->temperature);
 
     return 0;
   }
 
   // The busy percentage is exposed by amdgpu and several other DRM drivers.
+  // Separate video encode and decode utilization are not exposed generically
+  // through sysfs, so they remain unknown for non-NVIDIA devices.
   uint64_t busy;
 
   if (gpuinfo__read_uint(entry->path, "gpu_busy_percent", &busy)) {
@@ -476,6 +656,20 @@ gpuinfo_gpu_usage(gpuinfo_t *info, size_t index, gpuinfo_usage_t *result) {
 
   if (gpuinfo__read_uint(entry->path, "mem_info_vram_used", &used)) {
     result->memory_used = used;
+  }
+
+  // Power and temperature are exposed through the device's hwmon instance:
+  // "power1_average" in microwatts and "temp1_input" in millidegrees Celsius.
+  uint64_t microwatts;
+
+  if (gpuinfo__read_hwmon(entry->path, "power1_average", &microwatts)) {
+    result->power = (double) microwatts / 1000000.0;
+  }
+
+  uint64_t millicelsius;
+
+  if (gpuinfo__read_hwmon(entry->path, "temp1_input", &millicelsius)) {
+    result->temperature = (double) millicelsius / 1000.0;
   }
 
   return 0;

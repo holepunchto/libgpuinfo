@@ -25,46 +25,75 @@ typedef struct gpuinfo_usage_s gpuinfo_usage_t;
  * once.
  */
 typedef enum {
+  // Cross-vendor APIs, available from any vendor's driver.
+
   /**
    * Vulkan.
    */
   gpuinfo_driver_vulkan = 0x1,
 
   /**
-   * Apple Metal. Only available on macOS.
-   */
-  gpuinfo_driver_metal = 0x2,
-
-  /**
    * OpenCL.
    */
-  gpuinfo_driver_opencl = 0x4,
+  gpuinfo_driver_opencl = 0x2,
 
   /**
    * OpenGL, including OpenGL ES via EGL.
    */
-  gpuinfo_driver_opengl = 0x8,
+  gpuinfo_driver_opengl = 0x4,
 
   /**
-   * NVIDIA CUDA. Vendor-specific, so only ever set on NVIDIA devices.
+   * WebGPU, via a native implementation such as Dawn or wgpu. Only detected
+   * when such an implementation is present on the system.
    */
-  gpuinfo_driver_cuda = 0x10,
+  gpuinfo_driver_webgpu = 0x8,
 
   /**
-   * Direct3D 12. Only available on Windows.
+   * Hardware-accelerated video encode and/or decode, via any of the
+   * platform's media APIs: VideoToolbox on macOS; VA-API or VDPAU on Linux;
+   * and AMD AMF, NVIDIA NVENC, or Intel Quick Sync on Windows.
    */
-  gpuinfo_driver_direct3d = 0x20,
+  gpuinfo_driver_video = 0x10,
+
+  // Apple. Only available on macOS.
 
   /**
-   * Intel oneAPI Level Zero. Vendor-specific, so only ever set on Intel
-   * devices.
+   * Apple Metal.
    */
-  gpuinfo_driver_level_zero = 0x40,
+  gpuinfo_driver_metal = 0x20,
+
+  // Microsoft. Only available on Windows.
 
   /**
-   * AMD ROCm/HIP. Vendor-specific, so only ever set on AMD devices.
+   * Direct3D 11.
    */
-  gpuinfo_driver_rocm = 0x80,
+  gpuinfo_driver_direct3d11 = 0x40,
+
+  /**
+   * Direct3D 12.
+   */
+  gpuinfo_driver_direct3d12 = 0x80,
+
+  // NVIDIA. Vendor-specific, so only ever set on NVIDIA devices.
+
+  /**
+   * NVIDIA CUDA.
+   */
+  gpuinfo_driver_cuda = 0x100,
+
+  // Intel. Vendor-specific, so only ever set on Intel devices.
+
+  /**
+   * Intel oneAPI Level Zero.
+   */
+  gpuinfo_driver_level_zero = 0x200,
+
+  // AMD. Vendor-specific, so only ever set on AMD devices.
+
+  /**
+   * AMD ROCm/HIP.
+   */
+  gpuinfo_driver_rocm = 0x400,
 } gpuinfo_driver_t;
 
 /**
@@ -113,6 +142,18 @@ struct gpuinfo_gpu_s {
   char vendor[GPUINFO_NAME_MAX];
 
   /**
+   * The name of the kernel driver bound to the device, NUL-terminated, e.g.
+   * "amdgpu", "i915", or "nvidia". Empty if unknown. Currently only populated
+   * on Linux.
+   */
+  char driver_name[GPUINFO_NAME_MAX];
+
+  /**
+   * The version of the driver software, NUL-terminated. Empty if unknown.
+   */
+  char driver_version[GPUINFO_NAME_MAX];
+
+  /**
    * The classification of the device.
    */
   gpuinfo_gpu_type_t type;
@@ -121,6 +162,35 @@ struct gpuinfo_gpu_s {
    * A bitmask of the `gpuinfo_driver_t` APIs the device can be driven by.
    */
   uint32_t drivers;
+
+  /**
+   * The PCI vendor identifier of the device, e.g. `0x10de` for NVIDIA. `0` if
+   * unknown.
+   */
+  uint32_t vendor_id;
+
+  /**
+   * The PCI device identifier of the device. `0` if unknown.
+   */
+  uint32_t device_id;
+
+  /**
+   * The PCI subsystem identifier of the device, packing the subsystem vendor
+   * in the high 16 bits and the subsystem device in the low 16 bits. `0` if
+   * unknown.
+   */
+  uint32_t subsystem_id;
+
+  /**
+   * The PCI revision of the device. `0` if unknown.
+   */
+  uint32_t revision;
+
+  /**
+   * Whether the device shares a single unified memory address space with the
+   * CPU rather than having distinct system and video memory.
+   */
+  bool unified_memory;
 
   /**
    * The total amount of video memory available to the device, in bytes. For an
@@ -142,6 +212,20 @@ struct gpuinfo_usage_s {
   double compute;
 
   /**
+   * The fraction of video encode capacity in use, in the range `[0, 1]`. A
+   * negative value indicates that encode utilization could not be determined
+   * on this platform.
+   */
+  double encode;
+
+  /**
+   * The fraction of video decode capacity in use, in the range `[0, 1]`. A
+   * negative value indicates that decode utilization could not be determined
+   * on this platform.
+   */
+  double decode;
+
+  /**
    * The amount of memory currently in use, in bytes.
    */
   uint64_t memory_used;
@@ -151,6 +235,18 @@ struct gpuinfo_usage_s {
    * unknown.
    */
   uint64_t memory_total;
+
+  /**
+   * The instantaneous power draw of the device, in watts. A negative value
+   * indicates that power draw could not be determined on this platform.
+   */
+  double power;
+
+  /**
+   * The temperature of the device, in degrees Celsius. A negative value
+   * indicates that temperature could not be determined on this platform.
+   */
+  double temperature;
 };
 
 /**

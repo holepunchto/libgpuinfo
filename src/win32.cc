@@ -8,7 +8,9 @@
 #include <windows.h>
 
 #include "../include/gpuinfo.h"
+#include "win32/d3d11.h"
 #include "win32/d3d12.h"
+#include "win32/driver.h"
 #include "win32/opengl.h"
 #include "win32/pdh.h"
 
@@ -51,6 +53,46 @@ gpuinfo__has_library(const char *name) {
   FreeLibrary(handle);
 
   return true;
+}
+
+static bool
+gpuinfo__has_any_library(const char *const *names) {
+  for (size_t i = 0; names[i] != NULL; i++) {
+    if (gpuinfo__has_library(names[i])) return true;
+  }
+
+  return false;
+}
+
+static bool
+gpuinfo__has_webgpu(void) {
+  // WebGPU has no system library; detect the common native implementations,
+  // Dawn and wgpu, when an application has bundled one.
+  static const char *const names[] = {
+    "webgpu_dawn.dll",
+    "dawn.dll",
+    "wgpu_native.dll",
+    "wgpu.dll",
+    NULL,
+  };
+
+  return gpuinfo__has_any_library(names);
+}
+
+static bool
+gpuinfo__has_video(void) {
+  // Media Foundation always ships with Windows, so it is not meaningful on its
+  // own; detect the vendor runtimes that indicate hardware encode and decode:
+  // AMD AMF, NVIDIA NVENC, and Intel Quick Sync via the Media SDK or oneVPL.
+  static const char *const names[] = {
+    "amfrt64.dll",
+    "nvEncodeAPI64.dll",
+    "libmfxhw64.dll",
+    "libvpl.dll",
+    NULL,
+  };
+
+  return gpuinfo__has_any_library(names);
 }
 
 // Clear the vendor-specific compute APIs that do not apply to a device's
@@ -97,14 +139,29 @@ gpuinfo__fill_static(gpuinfo_device_t *entry, const DXGI_ADAPTER_DESC1 &desc, ui
     gpu->vendor[0] = '\0';
   }
 
+  gpu->vendor_id = desc.VendorId;
+  gpu->device_id = desc.DeviceId;
+  gpu->revision = desc.Revision;
+
+  // `SubSysId` is the raw PCI subsystem register, with the subsystem vendor in
+  // its low word and the subsystem device in its high word. Repack it into the
+  // vendor-high, device-low layout the field documents, matching Linux.
+  gpu->subsystem_id = ((desc.SubSysId & 0xffff) << 16) | (desc.SubSysId >> 16);
+
+  gpuinfo_driver_version(desc.VendorId, desc.DeviceId, gpu->driver_version, sizeof(gpu->driver_version));
+
   // An adapter with dedicated video memory is a discrete GPU; one that draws
-  // only on shared system memory, such as Intel graphics, is integrated.
-  if (desc.DedicatedVideoMemory > 0 && desc.VendorId != GPUINFO_VENDOR_INTEL) {
+  // only on shared system memory is integrated. This holds regardless of
+  // vendor, including Intel's discrete Arc parts as much as its integrated
+  // graphics.
+  if (desc.DedicatedVideoMemory > 0) {
     gpu->type = gpuinfo_gpu_type_dedicated;
     gpu->memory = desc.DedicatedVideoMemory;
+    gpu->unified_memory = false;
   } else {
     gpu->type = gpuinfo_gpu_type_integrated;
     gpu->memory = desc.SharedSystemMemory;
+    gpu->unified_memory = true;
   }
 
   gpu->drivers = gpuinfo__device_drivers(drivers, gpu->vendor);
@@ -123,6 +180,8 @@ gpuinfo_init(gpuinfo_t **result) {
   if (gpuinfo__has_library("nvcuda.dll")) drivers |= gpuinfo_driver_cuda;
   if (gpuinfo__has_library("ze_loader.dll")) drivers |= gpuinfo_driver_level_zero;
   if (gpuinfo__has_library("amdhip64.dll")) drivers |= gpuinfo_driver_rocm;
+  if (gpuinfo__has_webgpu()) drivers |= gpuinfo_driver_webgpu;
+  if (gpuinfo__has_video()) drivers |= gpuinfo_driver_video;
 
   if (gpuinfo_opengl_available()) drivers |= gpuinfo_driver_opengl;
 
@@ -161,8 +220,10 @@ gpuinfo_init(gpuinfo_t **result) {
       return -1;
     }
 
+    gpuinfo_d3d11_t d3d11;
     gpuinfo_d3d12_t d3d12;
 
+    gpuinfo_d3d11_open(&d3d11);
     gpuinfo_d3d12_open(&d3d12);
 
     size_t index = 0;
@@ -188,12 +249,18 @@ gpuinfo_init(gpuinfo_t **result) {
 
       gpuinfo__fill_static(entry, desc, drivers);
 
-      // Direct3D 12 support is a per-adapter capability; reflect it on the
-      // device and, if any adapter supports it, on the context.
-      if (gpuinfo_d3d12_supported(&d3d12, adapter)) {
-        entry->info.drivers |= gpuinfo_driver_direct3d;
+      // Direct3D support is a per-adapter capability; reflect it on the device
+      // and, if any adapter supports it, on the context.
+      if (gpuinfo_d3d11_supported(&d3d11, adapter)) {
+        entry->info.drivers |= gpuinfo_driver_direct3d11;
 
-        info->drivers |= gpuinfo_driver_direct3d;
+        info->drivers |= gpuinfo_driver_direct3d11;
+      }
+
+      if (gpuinfo_d3d12_supported(&d3d12, adapter)) {
+        entry->info.drivers |= gpuinfo_driver_direct3d12;
+
+        info->drivers |= gpuinfo_driver_direct3d12;
       }
 
       adapter->Release();
@@ -201,6 +268,7 @@ gpuinfo_init(gpuinfo_t **result) {
       index++;
     }
 
+    gpuinfo_d3d11_close(&d3d11);
     gpuinfo_d3d12_close(&d3d12);
 
     info->gpu_count = index;
@@ -259,9 +327,16 @@ gpuinfo_gpu_usage(gpuinfo_t *info, size_t index, gpuinfo_usage_t *result) {
 
   gpuinfo_device_t *entry = &info->gpus[index];
 
-  result->compute = gpuinfo_pdh_utilization(&info->pdh, entry->luid);
+  result->compute = -1.0;
+  result->encode = -1.0;
+  result->decode = -1.0;
   result->memory_used = 0;
   result->memory_total = entry->info.memory;
+  // Windows exposes no per-adapter power or temperature without a vendor SDK.
+  result->power = -1.0;
+  result->temperature = -1.0;
+
+  gpuinfo_pdh_utilization(&info->pdh, entry->luid, &result->compute, &result->encode, &result->decode);
 
   if (entry->adapter != NULL) {
     DXGI_QUERY_VIDEO_MEMORY_INFO memory;
