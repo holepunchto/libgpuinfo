@@ -103,6 +103,45 @@ gpuinfo__has_opencl(void) {
   return gpuinfo__dlopen_any(names);
 }
 
+static bool
+gpuinfo__has_opengl(void) {
+  static const char *const names[] = {"libGL.so.1", "libGL.so", "libEGL.so.1", "libEGL.so", NULL};
+
+  return gpuinfo__dlopen_any(names);
+}
+
+static bool
+gpuinfo__has_cuda(void) {
+  static const char *const names[] = {"libcuda.so.1", "libcuda.so", NULL};
+
+  return gpuinfo__dlopen_any(names);
+}
+
+static bool
+gpuinfo__has_level_zero(void) {
+  static const char *const names[] = {"libze_loader.so.1", "libze_loader.so", NULL};
+
+  return gpuinfo__dlopen_any(names);
+}
+
+static bool
+gpuinfo__has_rocm(void) {
+  static const char *const names[] = {"libamdhip64.so", NULL};
+
+  return gpuinfo__dlopen_any(names);
+}
+
+// Clear the vendor-specific compute APIs that do not apply to a device's
+// vendor, leaving the cross-vendor APIs untouched.
+static uint32_t
+gpuinfo__device_drivers(uint32_t drivers, const char *vendor) {
+  if (strcmp(vendor, "NVIDIA") != 0) drivers &= ~(uint32_t) gpuinfo_driver_cuda;
+  if (strcmp(vendor, "AMD") != 0) drivers &= ~(uint32_t) gpuinfo_driver_rocm;
+  if (strcmp(vendor, "Intel") != 0) drivers &= ~(uint32_t) gpuinfo_driver_level_zero;
+
+  return drivers;
+}
+
 // Look up a device name in the system PCI identifier database, if present. This
 // is the same database used by `lspci` and is the only source of marketing
 // names available without a driver-specific query.
@@ -228,7 +267,7 @@ gpuinfo__fill_static(gpuinfo_device_t *entry, uint32_t drivers) {
     gpu->type = gpuinfo_gpu_type_dedicated;
   }
 
-  gpu->drivers = drivers;
+  gpu->drivers = gpuinfo__device_drivers(drivers, gpu->vendor);
 }
 
 static int
@@ -314,6 +353,10 @@ gpuinfo_init(gpuinfo_t **result) {
 
   if (gpuinfo__has_vulkan()) drivers |= gpuinfo_driver_vulkan;
   if (gpuinfo__has_opencl()) drivers |= gpuinfo_driver_opencl;
+  if (gpuinfo__has_opengl()) drivers |= gpuinfo_driver_opengl;
+  if (gpuinfo__has_cuda()) drivers |= gpuinfo_driver_cuda;
+  if (gpuinfo__has_level_zero()) drivers |= gpuinfo_driver_level_zero;
+  if (gpuinfo__has_rocm()) drivers |= gpuinfo_driver_rocm;
 
   info->drivers = drivers;
 

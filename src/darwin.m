@@ -109,6 +109,27 @@ gpuinfo__has_opencl(void) {
   return gpuinfo__dlopen_any(names);
 }
 
+static bool
+gpuinfo__has_opengl(void) {
+  static const char *const names[] = {
+    "/System/Library/Frameworks/OpenGL.framework/OpenGL",
+    NULL,
+  };
+
+  return gpuinfo__dlopen_any(names);
+}
+
+// Clear the vendor-specific compute APIs that do not apply to a device's
+// vendor, leaving the cross-vendor APIs untouched.
+static uint32_t
+gpuinfo__device_drivers(uint32_t drivers, const char *vendor) {
+  if (strcmp(vendor, "NVIDIA") != 0) drivers &= ~(uint32_t) gpuinfo_driver_cuda;
+  if (strcmp(vendor, "AMD") != 0) drivers &= ~(uint32_t) gpuinfo_driver_rocm;
+  if (strcmp(vendor, "Intel") != 0) drivers &= ~(uint32_t) gpuinfo_driver_level_zero;
+
+  return drivers;
+}
+
 // Locate the IOKit accelerator service whose registry entry identifier matches
 // the one reported by a Metal device. The returned service must be released by
 // the caller with `IOObjectRelease()`.
@@ -275,6 +296,7 @@ gpuinfo_init(gpuinfo_t **result) {
     if (devices.count > 0) drivers |= gpuinfo_driver_metal;
     if (gpuinfo__has_vulkan()) drivers |= gpuinfo_driver_vulkan;
     if (gpuinfo__has_opencl()) drivers |= gpuinfo_driver_opencl;
+    if (gpuinfo__has_opengl()) drivers |= gpuinfo_driver_opengl;
 
     info->drivers = drivers;
     info->gpu_count = devices.count;
@@ -304,10 +326,11 @@ gpuinfo_init(gpuinfo_t **result) {
       gpuinfo__copy_string(gpu->name, sizeof(gpu->name), device.name);
 
       gpu->type = gpuinfo__device_type(device);
-      gpu->drivers = drivers;
       gpu->memory = device.recommendedMaxWorkingSetSize;
 
       gpuinfo__fill_vendor(gpu, entry->registry_id, device.name);
+
+      gpu->drivers = gpuinfo__device_drivers(drivers, gpu->vendor);
     }
 
     [devices release];

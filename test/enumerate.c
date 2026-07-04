@@ -33,6 +33,11 @@ main() {
   if (gpuinfo_driver_available(info, gpuinfo_driver_vulkan)) printf(" vulkan");
   if (gpuinfo_driver_available(info, gpuinfo_driver_metal)) printf(" metal");
   if (gpuinfo_driver_available(info, gpuinfo_driver_opencl)) printf(" opencl");
+  if (gpuinfo_driver_available(info, gpuinfo_driver_opengl)) printf(" opengl");
+  if (gpuinfo_driver_available(info, gpuinfo_driver_cuda)) printf(" cuda");
+  if (gpuinfo_driver_available(info, gpuinfo_driver_direct3d)) printf(" direct3d");
+  if (gpuinfo_driver_available(info, gpuinfo_driver_level_zero)) printf(" level-zero");
+  if (gpuinfo_driver_available(info, gpuinfo_driver_rocm)) printf(" rocm");
   printf("\n");
 
   size_t count = gpuinfo_gpu_count(info);

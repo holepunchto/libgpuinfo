@@ -8,6 +8,8 @@
 #include <windows.h>
 
 #include "../include/gpuinfo.h"
+#include "win32/d3d12.h"
+#include "win32/opengl.h"
 #include "win32/pdh.h"
 
 // Known PCI vendor identifiers, used to resolve a human-readable vendor name.
@@ -49,6 +51,17 @@ gpuinfo__has_library(const char *name) {
   FreeLibrary(handle);
 
   return true;
+}
+
+// Clear the vendor-specific compute APIs that do not apply to a device's
+// vendor, leaving the cross-vendor APIs untouched.
+static uint32_t
+gpuinfo__device_drivers(uint32_t drivers, const char *vendor) {
+  if (strcmp(vendor, "NVIDIA") != 0) drivers &= ~(uint32_t) gpuinfo_driver_cuda;
+  if (strcmp(vendor, "AMD") != 0) drivers &= ~(uint32_t) gpuinfo_driver_rocm;
+  if (strcmp(vendor, "Intel") != 0) drivers &= ~(uint32_t) gpuinfo_driver_level_zero;
+
+  return drivers;
 }
 
 static void
@@ -94,7 +107,7 @@ gpuinfo__fill_static(gpuinfo_device_t *entry, const DXGI_ADAPTER_DESC1 &desc, ui
     gpu->memory = desc.SharedSystemMemory;
   }
 
-  gpu->drivers = drivers;
+  gpu->drivers = gpuinfo__device_drivers(drivers, gpu->vendor);
 }
 
 extern "C" int
@@ -107,6 +120,11 @@ gpuinfo_init(gpuinfo_t **result) {
 
   if (gpuinfo__has_library("vulkan-1.dll")) drivers |= gpuinfo_driver_vulkan;
   if (gpuinfo__has_library("OpenCL.dll")) drivers |= gpuinfo_driver_opencl;
+  if (gpuinfo__has_library("nvcuda.dll")) drivers |= gpuinfo_driver_cuda;
+  if (gpuinfo__has_library("ze_loader.dll")) drivers |= gpuinfo_driver_level_zero;
+  if (gpuinfo__has_library("amdhip64.dll")) drivers |= gpuinfo_driver_rocm;
+
+  if (gpuinfo_opengl_available()) drivers |= gpuinfo_driver_opengl;
 
   info->drivers = drivers;
 
@@ -143,6 +161,10 @@ gpuinfo_init(gpuinfo_t **result) {
       return -1;
     }
 
+    gpuinfo_d3d12_t d3d12;
+
+    gpuinfo_d3d12_open(&d3d12);
+
     size_t index = 0;
 
     for (UINT i = 0; factory->EnumAdapters1(i, &adapter) != DXGI_ERROR_NOT_FOUND && index < count; i++) {
@@ -166,10 +188,20 @@ gpuinfo_init(gpuinfo_t **result) {
 
       gpuinfo__fill_static(entry, desc, drivers);
 
+      // Direct3D 12 support is a per-adapter capability; reflect it on the
+      // device and, if any adapter supports it, on the context.
+      if (gpuinfo_d3d12_supported(&d3d12, adapter)) {
+        entry->info.drivers |= gpuinfo_driver_direct3d;
+
+        info->drivers |= gpuinfo_driver_direct3d;
+      }
+
       adapter->Release();
 
       index++;
     }
+
+    gpuinfo_d3d12_close(&d3d12);
 
     info->gpu_count = index;
   }

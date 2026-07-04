@@ -61,6 +61,7 @@ elseif(WIN32)
   target_link_libraries(
     gpuinfo
     PUBLIC
+      advapi32
       dxgi
       pdh
   )

@@ -25,9 +25,46 @@ typedef struct gpuinfo_usage_s gpuinfo_usage_t;
  * once.
  */
 typedef enum {
+  /**
+   * Vulkan.
+   */
   gpuinfo_driver_vulkan = 0x1,
+
+  /**
+   * Apple Metal. Only available on macOS.
+   */
   gpuinfo_driver_metal = 0x2,
+
+  /**
+   * OpenCL.
+   */
   gpuinfo_driver_opencl = 0x4,
+
+  /**
+   * OpenGL, including OpenGL ES via EGL.
+   */
+  gpuinfo_driver_opengl = 0x8,
+
+  /**
+   * NVIDIA CUDA. Vendor-specific, so only ever set on NVIDIA devices.
+   */
+  gpuinfo_driver_cuda = 0x10,
+
+  /**
+   * Direct3D 12. Only available on Windows.
+   */
+  gpuinfo_driver_direct3d = 0x20,
+
+  /**
+   * Intel oneAPI Level Zero. Vendor-specific, so only ever set on Intel
+   * devices.
+   */
+  gpuinfo_driver_level_zero = 0x40,
+
+  /**
+   * AMD ROCm/HIP. Vendor-specific, so only ever set on AMD devices.
+   */
+  gpuinfo_driver_rocm = 0x80,
 } gpuinfo_driver_t;
 
 /**
