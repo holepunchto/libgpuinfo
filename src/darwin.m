@@ -229,17 +229,15 @@ gpuinfo__fill_vendor(gpuinfo_gpu_t *gpu, uint64_t registry_id, NSString *name) {
 
 static gpuinfo_gpu_type_t
 gpuinfo__device_type(id<MTLDevice> device) {
-  if (@available(macOS 10.15, *)) {
-    switch (device.location) {
-    case MTLDeviceLocationExternal:
-      return gpuinfo_gpu_type_external;
-    case MTLDeviceLocationSlot:
-      return gpuinfo_gpu_type_dedicated;
-    case MTLDeviceLocationBuiltIn:
-      return device.hasUnifiedMemory ? gpuinfo_gpu_type_integrated : gpuinfo_gpu_type_dedicated;
-    default:
-      if (device.hasUnifiedMemory) return gpuinfo_gpu_type_integrated;
-    }
+  switch (device.location) {
+  case MTLDeviceLocationExternal:
+    return gpuinfo_gpu_type_external;
+  case MTLDeviceLocationSlot:
+    return gpuinfo_gpu_type_dedicated;
+  case MTLDeviceLocationBuiltIn:
+    return device.hasUnifiedMemory ? gpuinfo_gpu_type_integrated : gpuinfo_gpu_type_dedicated;
+  default:
+    if (device.hasUnifiedMemory) return gpuinfo_gpu_type_integrated;
   }
 
   if (device.isRemovable) return gpuinfo_gpu_type_external;
@@ -377,15 +375,13 @@ gpuinfo_gpu_usage(gpuinfo_t *info, size_t index, gpuinfo_usage_t *result) {
 
         uint64_t utilization;
 
-        if (gpuinfo__dict_number(dict, CFSTR("Device Utilization %"), &utilization) ||
-            gpuinfo__dict_number(dict, CFSTR("GPU Activity(%)"), &utilization)) {
+        if (gpuinfo__dict_number(dict, CFSTR("Device Utilization %"), &utilization) || gpuinfo__dict_number(dict, CFSTR("GPU Activity(%)"), &utilization)) {
           result->compute = (double) utilization / 100.0;
         }
 
         uint64_t memory_used;
 
-        if (gpuinfo__dict_number(dict, CFSTR("In use system memory"), &memory_used) ||
-            gpuinfo__dict_number(dict, CFSTR("vramUsedBytes"), &memory_used)) {
+        if (gpuinfo__dict_number(dict, CFSTR("In use system memory"), &memory_used) || gpuinfo__dict_number(dict, CFSTR("vramUsedBytes"), &memory_used)) {
           result->memory_used = memory_used;
         }
       }
