@@ -209,11 +209,17 @@ gpuinfo_pdh__refresh(gpuinfo_pdh_t *pdh) {
       double value = items[i].FmtValue.doubleValue;
 
       // Accumulate the video engines separately so that encode and decode
-      // utilization can be reported alongside overall compute.
+      // utilization can be reported alongside overall compute. They are then
+      // excluded from the engine set that feeds compute, so that busy video
+      // engines do not inflate the compute figure.
       if (gpuinfo_pdh__engine_contains(items[i].szName, L"encode")) {
         work[w].encode += value;
+
+        continue;
       } else if (gpuinfo_pdh__engine_contains(items[i].szName, L"decode")) {
         work[w].decode += value;
+
+        continue;
       }
 
       uint32_t key = gpuinfo_pdh__engine_hash(items[i].szName);

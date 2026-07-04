@@ -246,30 +246,6 @@ gpuinfo__has_webgpu(void) {
   return gpuinfo__dlopen_any(names);
 }
 
-static bool
-gpuinfo__has_video(void) {
-  // The cross-vendor media stacks are VA-API and VDPAU; NVIDIA additionally
-  // exposes NVENC for encode and NVCUVID for decode, and Intel exposes oneVPL
-  // and the older Media SDK. Any one of them indicates hardware video support.
-  static const char *const names[] = {
-    "libva.so.2",
-    "libva.so",
-    "libvdpau.so.1",
-    "libvdpau.so",
-    "libnvidia-encode.so.1",
-    "libnvidia-encode.so",
-    "libnvcuvid.so.1",
-    "libnvcuvid.so",
-    "libvpl.so.2",
-    "libvpl.so",
-    "libmfx.so.1",
-    "libmfx.so",
-    NULL,
-  };
-
-  return gpuinfo__dlopen_any(names);
-}
-
 // Clear the vendor-specific compute APIs that do not apply to a device's
 // vendor, leaving the cross-vendor APIs untouched.
 static uint32_t
@@ -456,6 +432,23 @@ gpuinfo__is_card(const struct dirent *entry) {
   return entry->d_name[4] != '\0';
 }
 
+// Order two "cardN" names by their numeric suffix so that enumeration is stable
+// across runs and independent of the order `readdir` happens to yield, e.g.
+// "card2" before "card10".
+static int
+gpuinfo__card_compare(const void *a, const void *b) {
+  const char *lhs = (const char *) a;
+  const char *rhs = (const char *) b;
+
+  unsigned long l = strtoul(lhs + 4, NULL, 10);
+  unsigned long r = strtoul(rhs + 4, NULL, 10);
+
+  if (l < r) return -1;
+  if (l > r) return 1;
+
+  return 0;
+}
+
 // Resolve the PCI domain, bus, and device of a DRM card by reading its device
 // symlink, whose target basename has the form "0000:01:00.0".
 static bool
@@ -542,7 +535,6 @@ gpuinfo_init(gpuinfo_t **result) {
   if (gpuinfo__has_opencl()) drivers |= gpuinfo_driver_opencl;
   if (gpuinfo__has_opengl()) drivers |= gpuinfo_driver_opengl;
   if (gpuinfo__has_webgpu()) drivers |= gpuinfo_driver_webgpu;
-  if (gpuinfo__has_video()) drivers |= gpuinfo_driver_video;
   if (gpuinfo__has_cuda()) drivers |= gpuinfo_driver_cuda;
   if (gpuinfo__has_level_zero()) drivers |= gpuinfo_driver_level_zero;
   if (gpuinfo__has_rocm()) drivers |= gpuinfo_driver_rocm;
@@ -557,44 +549,66 @@ gpuinfo_init(gpuinfo_t **result) {
     return 0;
   }
 
-  // Count the cards first so that the device array can be sized exactly.
+  // Collect the card names first so that they can be sorted into a stable
+  // order before the device array is filled. `readdir` yields entries in an
+  // unspecified order, but callers expect the index to track the card number.
   struct dirent *entry;
 
+  typedef char gpuinfo_card_name_t[32];
+
+  gpuinfo_card_name_t *names = NULL;
+
   size_t count = 0;
+  size_t capacity = 0;
 
   while ((entry = readdir(dir)) != NULL) {
-    if (gpuinfo__is_card(entry)) count++;
+    if (!gpuinfo__is_card(entry)) continue;
+
+    // Skip any card name that does not fit the fixed-size buffer rather than
+    // risk truncating it into a different card's path.
+    if (strlen(entry->d_name) >= sizeof(gpuinfo_card_name_t)) continue;
+
+    if (count == capacity) {
+      size_t grown_capacity = capacity == 0 ? 4 : capacity * 2;
+
+      gpuinfo_card_name_t *grown = realloc(names, grown_capacity * sizeof(*names));
+
+      if (grown == NULL) break;
+
+      names = grown;
+      capacity = grown_capacity;
+    }
+
+    strcpy(names[count], entry->d_name);
+
+    count++;
   }
 
+  closedir(dir);
+
   if (count > 0) {
+    qsort(names, count, sizeof(*names), gpuinfo__card_compare);
+
     info->gpus = calloc(count, sizeof(gpuinfo_device_t));
 
     if (info->gpus == NULL) {
-      closedir(dir);
+      free(names);
 
       free(info);
 
       return -1;
     }
 
-    rewinddir(dir);
-
-    size_t i = 0;
-
-    while ((entry = readdir(dir)) != NULL && i < count) {
-      if (!gpuinfo__is_card(entry)) continue;
-
-      snprintf(info->gpus[i].path, sizeof(info->gpus[i].path), "/sys/class/drm/%s/device", entry->d_name);
+    for (size_t i = 0; i < count; i++) {
+      snprintf(info->gpus[i].path, sizeof(info->gpus[i].path), "/sys/class/drm/%s/device", names[i]);
 
       gpuinfo__fill_static(&info->gpus[i], drivers);
-
-      i++;
     }
 
-    info->gpu_count = i;
+    info->gpu_count = count;
   }
 
-  closedir(dir);
+  free(names);
 
   gpuinfo__nvml_match(info);
 

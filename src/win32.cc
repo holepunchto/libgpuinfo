@@ -45,7 +45,10 @@ struct gpuinfo_s {
 
 static bool
 gpuinfo__has_library(const char *name) {
-  HMODULE handle = LoadLibraryA(name);
+  // Map the library as a data file so that merely detecting a driver does not
+  // run its initializer, mirroring the non-loading probe used on the other
+  // platforms.
+  HMODULE handle = LoadLibraryExA(name, NULL, LOAD_LIBRARY_AS_DATAFILE);
 
   if (handle == NULL) return false;
 
@@ -72,22 +75,6 @@ gpuinfo__has_webgpu(void) {
     "dawn.dll",
     "wgpu_native.dll",
     "wgpu.dll",
-    NULL,
-  };
-
-  return gpuinfo__has_any_library(names);
-}
-
-static bool
-gpuinfo__has_video(void) {
-  // Media Foundation always ships with Windows, so it is not meaningful on its
-  // own; detect the vendor runtimes that indicate hardware encode and decode:
-  // AMD AMF, NVIDIA NVENC, and Intel Quick Sync via the Media SDK or oneVPL.
-  static const char *const names[] = {
-    "amfrt64.dll",
-    "nvEncodeAPI64.dll",
-    "libmfxhw64.dll",
-    "libvpl.dll",
     NULL,
   };
 
@@ -180,7 +167,6 @@ gpuinfo_init(gpuinfo_t **result) {
   if (gpuinfo__has_library("ze_loader.dll")) drivers |= gpuinfo_driver_level_zero;
   if (gpuinfo__has_library("amdhip64.dll")) drivers |= gpuinfo_driver_rocm;
   if (gpuinfo__has_webgpu()) drivers |= gpuinfo_driver_webgpu;
-  if (gpuinfo__has_video()) drivers |= gpuinfo_driver_video;
 
   if (gpuinfo_opengl_available()) drivers |= gpuinfo_driver_opengl;
 

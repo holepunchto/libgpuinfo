@@ -34,7 +34,6 @@ main() {
   if (gpuinfo_driver_available(info, gpuinfo_driver_opencl)) printf(" opencl");
   if (gpuinfo_driver_available(info, gpuinfo_driver_opengl)) printf(" opengl");
   if (gpuinfo_driver_available(info, gpuinfo_driver_webgpu)) printf(" webgpu");
-  if (gpuinfo_driver_available(info, gpuinfo_driver_video)) printf(" video");
   if (gpuinfo_driver_available(info, gpuinfo_driver_metal)) printf(" metal");
   if (gpuinfo_driver_available(info, gpuinfo_driver_direct3d11)) printf(" direct3d11");
   if (gpuinfo_driver_available(info, gpuinfo_driver_direct3d12)) printf(" direct3d12");

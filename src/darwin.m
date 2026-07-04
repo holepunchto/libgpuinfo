@@ -134,18 +134,6 @@ gpuinfo__has_webgpu(void) {
   return gpuinfo__dlopen_any(names);
 }
 
-static bool
-gpuinfo__has_video(void) {
-  // VideoToolbox is the system framework for hardware video encode and decode
-  // and is backed by the GPU on all supported Macs.
-  static const char *const names[] = {
-    "/System/Library/Frameworks/VideoToolbox.framework/VideoToolbox",
-    NULL,
-  };
-
-  return gpuinfo__dlopen_any(names);
-}
-
 // Clear the vendor-specific compute APIs that do not apply to a device's
 // vendor, leaving the cross-vendor APIs untouched.
 static uint32_t
@@ -356,7 +344,6 @@ gpuinfo_init(gpuinfo_t **result) {
     if (gpuinfo__has_opencl()) drivers |= gpuinfo_driver_opencl;
     if (gpuinfo__has_opengl()) drivers |= gpuinfo_driver_opengl;
     if (gpuinfo__has_webgpu()) drivers |= gpuinfo_driver_webgpu;
-    if (gpuinfo__has_video()) drivers |= gpuinfo_driver_video;
 
     info->drivers = drivers;
     info->gpu_count = devices.count;

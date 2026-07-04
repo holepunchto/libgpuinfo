@@ -48,52 +48,45 @@ typedef enum {
    */
   gpuinfo_driver_webgpu = 0x8,
 
-  /**
-   * Hardware-accelerated video encode and/or decode, via any of the
-   * platform's media APIs: VideoToolbox on macOS; VA-API or VDPAU on Linux;
-   * and AMD AMF, NVIDIA NVENC, or Intel Quick Sync on Windows.
-   */
-  gpuinfo_driver_video = 0x10,
-
   // Apple. Only available on macOS.
 
   /**
    * Apple Metal.
    */
-  gpuinfo_driver_metal = 0x20,
+  gpuinfo_driver_metal = 0x10,
 
   // Microsoft. Only available on Windows.
 
   /**
    * Direct3D 11.
    */
-  gpuinfo_driver_direct3d11 = 0x40,
+  gpuinfo_driver_direct3d11 = 0x20,
 
   /**
    * Direct3D 12.
    */
-  gpuinfo_driver_direct3d12 = 0x80,
+  gpuinfo_driver_direct3d12 = 0x40,
 
   // NVIDIA. Vendor-specific, so only ever set on NVIDIA devices.
 
   /**
    * NVIDIA CUDA.
    */
-  gpuinfo_driver_cuda = 0x100,
+  gpuinfo_driver_cuda = 0x80,
 
   // Intel. Vendor-specific, so only ever set on Intel devices.
 
   /**
    * Intel oneAPI Level Zero.
    */
-  gpuinfo_driver_level_zero = 0x200,
+  gpuinfo_driver_level_zero = 0x100,
 
   // AMD. Vendor-specific, so only ever set on AMD devices.
 
   /**
    * AMD ROCm/HIP.
    */
-  gpuinfo_driver_rocm = 0x400,
+  gpuinfo_driver_rocm = 0x200,
 } gpuinfo_driver_t;
 
 /**
