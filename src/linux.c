@@ -218,7 +218,15 @@ gpuinfo__has_level_zero(void) {
 
 static bool
 gpuinfo__has_rocm(void) {
-  static const char *const names[] = {"libamdhip64.so", NULL};
+  // A runtime-only ROCm install ships only the versioned library; the
+  // unversioned symlink is part of the development package, so probe the
+  // versioned names first to detect a machine that can merely run HIP programs.
+  static const char *const names[] = {
+    "libamdhip64.so.6",
+    "libamdhip64.so.5",
+    "libamdhip64.so",
+    NULL,
+  };
 
   return gpuinfo__dlopen_any(names);
 }
@@ -241,7 +249,8 @@ gpuinfo__has_webgpu(void) {
 static bool
 gpuinfo__has_video(void) {
   // The cross-vendor media stacks are VA-API and VDPAU; NVIDIA additionally
-  // exposes NVENC directly. Any one of them indicates hardware video support.
+  // exposes NVENC for encode and NVCUVID for decode, and Intel exposes oneVPL
+  // and the older Media SDK. Any one of them indicates hardware video support.
   static const char *const names[] = {
     "libva.so.2",
     "libva.so",
@@ -249,6 +258,12 @@ gpuinfo__has_video(void) {
     "libvdpau.so",
     "libnvidia-encode.so.1",
     "libnvidia-encode.so",
+    "libnvcuvid.so.1",
+    "libnvcuvid.so",
+    "libvpl.so.2",
+    "libvpl.so",
+    "libmfx.so.1",
+    "libmfx.so",
     NULL,
   };
 

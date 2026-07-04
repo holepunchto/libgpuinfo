@@ -8,11 +8,10 @@
 #include <windows.h>
 
 #include "../include/gpuinfo.h"
-#include "win32/d3d11.h"
-#include "win32/d3d12.h"
 #include "win32/driver.h"
 #include "win32/opengl.h"
 #include "win32/pdh.h"
+#include "win32/wddm.h"
 
 // Known PCI vendor identifiers, used to resolve a human-readable vendor name.
 #define GPUINFO_VENDOR_AMD       0x1002
@@ -220,11 +219,9 @@ gpuinfo_init(gpuinfo_t **result) {
       return -1;
     }
 
-    gpuinfo_d3d11_t d3d11;
-    gpuinfo_d3d12_t d3d12;
+    gpuinfo_wddm_t wddm;
 
-    gpuinfo_d3d11_open(&d3d11);
-    gpuinfo_d3d12_open(&d3d12);
+    gpuinfo_wddm_open(&wddm);
 
     size_t index = 0;
 
@@ -249,15 +246,16 @@ gpuinfo_init(gpuinfo_t **result) {
 
       gpuinfo__fill_static(entry, desc, drivers);
 
-      // Direct3D support is a per-adapter capability; reflect it on the device
-      // and, if any adapter supports it, on the context.
-      if (gpuinfo_d3d11_supported(&d3d11, adapter)) {
-        entry->info.drivers |= gpuinfo_driver_direct3d11;
+      // Every hardware adapter DXGI enumerates supports Direct3D 11; the
+      // software rasterizer has already been skipped. Direct3D support is a
+      // per-adapter capability, so reflect it on the device and on the context.
+      entry->info.drivers |= gpuinfo_driver_direct3d11;
 
-        info->drivers |= gpuinfo_driver_direct3d11;
-      }
+      info->drivers |= gpuinfo_driver_direct3d11;
 
-      if (gpuinfo_d3d12_supported(&d3d12, adapter)) {
+      // Direct3D 12 requires a WDDM 2.0 driver, read passively from the
+      // kernel-mode driver rather than probed by creating a device.
+      if (gpuinfo_wddm_supports_d3d12(&wddm, entry->luid)) {
         entry->info.drivers |= gpuinfo_driver_direct3d12;
 
         info->drivers |= gpuinfo_driver_direct3d12;
@@ -268,8 +266,7 @@ gpuinfo_init(gpuinfo_t **result) {
       index++;
     }
 
-    gpuinfo_d3d11_close(&d3d11);
-    gpuinfo_d3d12_close(&d3d12);
+    gpuinfo_wddm_close(&wddm);
 
     info->gpu_count = index;
   }
