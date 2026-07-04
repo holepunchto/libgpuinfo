@@ -151,8 +151,10 @@ gpuinfo__pci_lookup(uint32_t vendor_id, uint32_t device_id, char *dst, size_t ca
         char *name = line + 1;
 
         // Skip the identifier and the two spaces that follow it.
-        while (*name != '\0' && *name != ' ' && *name != '\t') name++;
-        while (*name == ' ' || *name == '\t') name++;
+        while (*name != '\0' && *name != ' ' && *name != '\t')
+          name++;
+        while (*name == ' ' || *name == '\t')
+          name++;
 
         char *end = strchr(name, '\n');
 
