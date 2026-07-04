@@ -13,8 +13,10 @@
 #include <string.h>
 #include <wchar.h>
 
-#include <pdh.h>
 #include <windows.h>
+
+#include <pdh.h>
+#include <pdhmsg.h>
 
 // The maximum number of distinct engine types accumulated per adapter. Real
 // adapters expose a handful (3D, Copy, Video, ...).
@@ -25,6 +27,22 @@
 #define GPUINFO_PDH_INTERVAL 50
 
 typedef struct gpuinfo_pdh_s gpuinfo_pdh_t;
+
+// The cached utilization of a single adapter. Defined at file scope rather than
+// nested so that its type is unambiguous when compiled as C++.
+typedef struct {
+  LUID luid;
+  double compute;
+} gpuinfo_pdh_result_t;
+
+// A working entry summing utilization by engine type for one adapter while a
+// collection is being processed.
+typedef struct {
+  LUID luid;
+  uint32_t keys[GPUINFO_PDH_MAX_ENGINES];
+  double sums[GPUINFO_PDH_MAX_ENGINES];
+  unsigned length;
+} gpuinfo_pdh_work_t;
 
 struct gpuinfo_pdh_s {
   PDH_HQUERY query;
@@ -37,10 +55,7 @@ struct gpuinfo_pdh_s {
   // Cached per-adapter utilization from the most recent collection.
   size_t count;
   size_t capacity;
-  struct gpuinfo_pdh_result_s {
-    LUID luid;
-    double compute;
-  } *results;
+  gpuinfo_pdh_result_t *results;
 };
 
 static bool
@@ -114,12 +129,7 @@ gpuinfo_pdh__refresh(gpuinfo_pdh_t *pdh) {
   if (PdhGetFormattedCounterArrayW(pdh->counter, PDH_FMT_DOUBLE, &size, &count, items) == ERROR_SUCCESS) {
     // A working set with one entry per distinct LUID, each summing utilization
     // by engine type.
-    struct gpuinfo_pdh_work_s {
-      LUID luid;
-      uint32_t keys[GPUINFO_PDH_MAX_ENGINES];
-      double sums[GPUINFO_PDH_MAX_ENGINES];
-      unsigned length;
-    } *work = NULL;
+    gpuinfo_pdh_work_t *work = NULL;
 
     size_t work_count = 0;
     size_t work_capacity = 0;
@@ -141,7 +151,7 @@ gpuinfo_pdh__refresh(gpuinfo_pdh_t *pdh) {
         if (work_count == work_capacity) {
           size_t capacity = work_capacity == 0 ? 4 : work_capacity * 2;
 
-          struct gpuinfo_pdh_work_s *grown = (struct gpuinfo_pdh_work_s *) realloc(work, capacity * sizeof(*work));
+          gpuinfo_pdh_work_t *grown = (gpuinfo_pdh_work_t *) realloc(work, capacity * sizeof(*work));
 
           if (grown == NULL) break;
 
@@ -176,7 +186,7 @@ gpuinfo_pdh__refresh(gpuinfo_pdh_t *pdh) {
     }
 
     if (work_count > pdh->capacity) {
-      struct gpuinfo_pdh_result_s *grown = (struct gpuinfo_pdh_result_s *) realloc(pdh->results, work_count * sizeof(*pdh->results));
+      gpuinfo_pdh_result_t *grown = (gpuinfo_pdh_result_t *) realloc(pdh->results, work_count * sizeof(*pdh->results));
 
       if (grown != NULL) {
         pdh->results = grown;
