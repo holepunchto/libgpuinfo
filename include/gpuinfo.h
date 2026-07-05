@@ -285,7 +285,7 @@ gpuinfo_gpu_count(const gpuinfo_t *info);
  * is out of range.
  */
 int
-gpuinfo_gpu_info(const gpuinfo_t *info, size_t index, gpuinfo_gpu_t *result);
+gpuinfo_gpu_query(const gpuinfo_t *info, size_t index, gpuinfo_gpu_t *result);
 
 /**
  * Sample the runtime utilization of the GPU at the given index, where `index`
@@ -295,7 +295,7 @@ gpuinfo_gpu_info(const gpuinfo_t *info, size_t index, gpuinfo_gpu_t *result);
  * is out of range.
  */
 int
-gpuinfo_gpu_usage(gpuinfo_t *info, size_t index, gpuinfo_usage_t *result);
+gpuinfo_gpu_sample(gpuinfo_t *info, size_t index, gpuinfo_usage_t *result);
 
 #ifdef __cplusplus
 }

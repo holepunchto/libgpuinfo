@@ -49,12 +49,12 @@ main() {
   for (size_t i = 0; i < count; i++) {
     gpuinfo_gpu_t gpu;
 
-    err = gpuinfo_gpu_info(info, i, &gpu);
+    err = gpuinfo_gpu_query(info, i, &gpu);
     assert(err == 0);
 
     gpuinfo_usage_t usage;
 
-    err = gpuinfo_gpu_usage(info, i, &usage);
+    err = gpuinfo_gpu_sample(info, i, &usage);
     assert(err == 0);
 
     printf(
@@ -109,7 +109,7 @@ main() {
 
   // Out-of-range access must fail rather than crash.
   gpuinfo_gpu_t gpu;
-  assert(gpuinfo_gpu_info(info, count, &gpu) < 0);
+  assert(gpuinfo_gpu_query(info, count, &gpu) < 0);
 
   gpuinfo_destroy(info);
 

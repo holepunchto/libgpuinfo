@@ -643,7 +643,7 @@ gpuinfo_gpu_count(const gpuinfo_t *info) {
 }
 
 int
-gpuinfo_gpu_info(const gpuinfo_t *info, size_t index, gpuinfo_gpu_t *result) {
+gpuinfo_gpu_query(const gpuinfo_t *info, size_t index, gpuinfo_gpu_t *result) {
   if (index >= info->gpu_count) return -1;
 
   *result = info->gpus[index].info;
@@ -652,7 +652,7 @@ gpuinfo_gpu_info(const gpuinfo_t *info, size_t index, gpuinfo_gpu_t *result) {
 }
 
 int
-gpuinfo_gpu_usage(gpuinfo_t *info, size_t index, gpuinfo_usage_t *result) {
+gpuinfo_gpu_sample(gpuinfo_t *info, size_t index, gpuinfo_usage_t *result) {
   if (index >= info->gpu_count) return -1;
 
   gpuinfo_device_t *entry = &info->gpus[index];
