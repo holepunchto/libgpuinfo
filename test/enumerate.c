@@ -29,17 +29,22 @@ main() {
   err = gpuinfo_init(&info);
   assert(err == 0);
 
+  gpuinfo_drivers_t drivers;
+
+  err = gpuinfo_drivers(info, &drivers);
+  assert(err == 0);
+
   printf("drivers:");
-  if (gpuinfo_driver_available(info, gpuinfo_driver_vulkan)) printf(" vulkan");
-  if (gpuinfo_driver_available(info, gpuinfo_driver_opencl)) printf(" opencl");
-  if (gpuinfo_driver_available(info, gpuinfo_driver_opengl)) printf(" opengl");
-  if (gpuinfo_driver_available(info, gpuinfo_driver_webgpu)) printf(" webgpu");
-  if (gpuinfo_driver_available(info, gpuinfo_driver_metal)) printf(" metal");
-  if (gpuinfo_driver_available(info, gpuinfo_driver_direct3d11)) printf(" direct3d11");
-  if (gpuinfo_driver_available(info, gpuinfo_driver_direct3d12)) printf(" direct3d12");
-  if (gpuinfo_driver_available(info, gpuinfo_driver_cuda)) printf(" cuda");
-  if (gpuinfo_driver_available(info, gpuinfo_driver_level_zero)) printf(" level-zero");
-  if (gpuinfo_driver_available(info, gpuinfo_driver_rocm)) printf(" rocm");
+  if (drivers.vulkan) printf(" vulkan");
+  if (drivers.opencl) printf(" opencl");
+  if (drivers.opengl) printf(" opengl");
+  if (drivers.webgpu) printf(" webgpu");
+  if (drivers.metal) printf(" metal");
+  if (drivers.direct3d11) printf(" direct3d11");
+  if (drivers.direct3d12) printf(" direct3d12");
+  if (drivers.cuda) printf(" cuda");
+  if (drivers.level_zero) printf(" level-zero");
+  if (drivers.rocm) printf(" rocm");
   printf("\n");
 
   size_t count = gpuinfo_gpu_count(info);

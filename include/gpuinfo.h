@@ -18,76 +18,39 @@ extern "C" {
 typedef struct gpuinfo_s gpuinfo_t;
 typedef struct gpuinfo_gpu_s gpuinfo_gpu_t;
 typedef struct gpuinfo_usage_s gpuinfo_usage_t;
+typedef struct gpuinfo_drivers_s gpuinfo_drivers_t;
 
 /**
- * The graphics APIs, or "drivers", that a device may be driven by. Reported as
- * a bitmask so that a single device may advertise support for several APIs at
- * once.
+ * The graphics APIs, or "drivers", that a device may be driven by, each reported
+ * as a single bit within the struct. A single device may advertise support for
+ * several APIs at once.
+ *
+ * The cross-vendor APIs may be set on any device, while the vendor-specific ones
+ * are only ever set on a device from the corresponding vendor.
  */
-typedef enum {
+struct gpuinfo_drivers_s {
   // Cross-vendor APIs, available from any vendor's driver.
-
-  /**
-   * Vulkan.
-   */
-  gpuinfo_driver_vulkan = 0x1,
-
-  /**
-   * OpenCL.
-   */
-  gpuinfo_driver_opencl = 0x2,
-
-  /**
-   * OpenGL, including OpenGL ES via EGL.
-   */
-  gpuinfo_driver_opengl = 0x4,
-
-  /**
-   * WebGPU, via a native implementation such as Dawn or wgpu. Only detected
-   * when such an implementation is present on the system.
-   */
-  gpuinfo_driver_webgpu = 0x8,
+  bool vulkan : 1; // Vulkan
+  bool opencl : 1; // OpenCL
+  bool opengl : 1; // OpenGL, including OpenGL ES via EGL
+  bool webgpu : 1; // WebGPU, via a native Dawn or wgpu implementation
 
   // Apple. Only available on macOS.
-
-  /**
-   * Apple Metal.
-   */
-  gpuinfo_driver_metal = 0x10,
+  bool metal : 1; // Apple Metal
 
   // Microsoft. Only available on Windows.
-
-  /**
-   * Direct3D 11.
-   */
-  gpuinfo_driver_direct3d11 = 0x20,
-
-  /**
-   * Direct3D 12.
-   */
-  gpuinfo_driver_direct3d12 = 0x40,
+  bool direct3d11 : 1; // Direct3D 11
+  bool direct3d12 : 1; // Direct3D 12
 
   // NVIDIA. Vendor-specific, so only ever set on NVIDIA devices.
-
-  /**
-   * NVIDIA CUDA.
-   */
-  gpuinfo_driver_cuda = 0x80,
+  bool cuda : 1; // NVIDIA CUDA
 
   // Intel. Vendor-specific, so only ever set on Intel devices.
-
-  /**
-   * Intel oneAPI Level Zero.
-   */
-  gpuinfo_driver_level_zero = 0x100,
+  bool level_zero : 1; // Intel oneAPI Level Zero
 
   // AMD. Vendor-specific, so only ever set on AMD devices.
-
-  /**
-   * AMD ROCm/HIP.
-   */
-  gpuinfo_driver_rocm = 0x200,
-} gpuinfo_driver_t;
+  bool rocm : 1; // AMD ROCm/HIP
+};
 
 /**
  * The classification of a GPU relative to the host system.
@@ -152,9 +115,9 @@ struct gpuinfo_gpu_s {
   gpuinfo_gpu_type_t type;
 
   /**
-   * A bitmask of the `gpuinfo_driver_t` APIs the device can be driven by.
+   * The graphics APIs the device can be driven by.
    */
-  uint32_t drivers;
+  gpuinfo_drivers_t drivers;
 
   /**
    * The PCI vendor identifier of the device, e.g. `0x10de` for NVIDIA. `0` if
@@ -259,17 +222,12 @@ void
 gpuinfo_destroy(gpuinfo_t *info);
 
 /**
- * Get a bitmask of the `gpuinfo_driver_t` APIs for which a local driver was
- * detected on the system.
+ * Get the graphics APIs for which a local driver was detected on the system.
+ *
+ * Returns `0` on success or a negative value on failure.
  */
-uint32_t
-gpuinfo_drivers(const gpuinfo_t *info);
-
-/**
- * Check whether a local driver for the given API was detected on the system.
- */
-bool
-gpuinfo_driver_available(const gpuinfo_t *info, gpuinfo_driver_t driver);
+int
+gpuinfo_drivers(const gpuinfo_t *info, gpuinfo_drivers_t *result);
 
 /**
  * Get the number of GPUs enumerated in the system.

@@ -39,7 +39,7 @@ struct gpuinfo_device_s {
 };
 
 struct gpuinfo_s {
-  uint32_t drivers;
+  gpuinfo_drivers_t drivers;
   size_t gpu_count;
   gpuinfo_device_t *gpus;
 
@@ -248,11 +248,11 @@ gpuinfo__has_webgpu(void) {
 
 // Clear the vendor-specific compute APIs that do not apply to a device's
 // vendor, leaving the cross-vendor APIs untouched.
-static uint32_t
-gpuinfo__device_drivers(uint32_t drivers, const char *vendor) {
-  if (strcmp(vendor, "NVIDIA") != 0) drivers &= ~(uint32_t) gpuinfo_driver_cuda;
-  if (strcmp(vendor, "AMD") != 0) drivers &= ~(uint32_t) gpuinfo_driver_rocm;
-  if (strcmp(vendor, "Intel") != 0) drivers &= ~(uint32_t) gpuinfo_driver_level_zero;
+static gpuinfo_drivers_t
+gpuinfo__device_drivers(gpuinfo_drivers_t drivers, const char *vendor) {
+  if (strcmp(vendor, "NVIDIA") != 0) drivers.cuda = false;
+  if (strcmp(vendor, "AMD") != 0) drivers.rocm = false;
+  if (strcmp(vendor, "Intel") != 0) drivers.level_zero = false;
 
   return drivers;
 }
@@ -331,7 +331,7 @@ gpuinfo__pci_lookup(uint32_t vendor_id, uint32_t device_id, char *dst, size_t ca
 }
 
 static void
-gpuinfo__fill_static(gpuinfo_device_t *entry, uint32_t drivers) {
+gpuinfo__fill_static(gpuinfo_device_t *entry, gpuinfo_drivers_t drivers) {
   gpuinfo_gpu_t *gpu = &entry->info;
 
   uint64_t vendor_id = 0;
@@ -529,15 +529,15 @@ gpuinfo_init(gpuinfo_t **result) {
 
   if (info == NULL) return -1;
 
-  uint32_t drivers = 0;
+  gpuinfo_drivers_t drivers = {0};
 
-  if (gpuinfo__has_vulkan()) drivers |= gpuinfo_driver_vulkan;
-  if (gpuinfo__has_opencl()) drivers |= gpuinfo_driver_opencl;
-  if (gpuinfo__has_opengl()) drivers |= gpuinfo_driver_opengl;
-  if (gpuinfo__has_webgpu()) drivers |= gpuinfo_driver_webgpu;
-  if (gpuinfo__has_cuda()) drivers |= gpuinfo_driver_cuda;
-  if (gpuinfo__has_level_zero()) drivers |= gpuinfo_driver_level_zero;
-  if (gpuinfo__has_rocm()) drivers |= gpuinfo_driver_rocm;
+  drivers.vulkan = gpuinfo__has_vulkan();
+  drivers.opencl = gpuinfo__has_opencl();
+  drivers.opengl = gpuinfo__has_opengl();
+  drivers.webgpu = gpuinfo__has_webgpu();
+  drivers.cuda = gpuinfo__has_cuda();
+  drivers.level_zero = gpuinfo__has_level_zero();
+  drivers.rocm = gpuinfo__has_rocm();
 
   info->drivers = drivers;
 
@@ -627,14 +627,11 @@ gpuinfo_destroy(gpuinfo_t *info) {
   free(info);
 }
 
-uint32_t
-gpuinfo_drivers(const gpuinfo_t *info) {
-  return info->drivers;
-}
+int
+gpuinfo_drivers(const gpuinfo_t *info, gpuinfo_drivers_t *result) {
+  *result = info->drivers;
 
-bool
-gpuinfo_driver_available(const gpuinfo_t *info, gpuinfo_driver_t driver) {
-  return (info->drivers & (uint32_t) driver) != 0;
+  return 0;
 }
 
 size_t

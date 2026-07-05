@@ -35,7 +35,7 @@ struct gpuinfo_device_s {
 };
 
 struct gpuinfo_s {
-  uint32_t drivers;
+  gpuinfo_drivers_t drivers;
   size_t gpu_count;
   gpuinfo_device_t *gpus;
 
@@ -83,17 +83,17 @@ gpuinfo__has_webgpu(void) {
 
 // Clear the vendor-specific compute APIs that do not apply to a device's
 // vendor, leaving the cross-vendor APIs untouched.
-static uint32_t
-gpuinfo__device_drivers(uint32_t drivers, const char *vendor) {
-  if (strcmp(vendor, "NVIDIA") != 0) drivers &= ~(uint32_t) gpuinfo_driver_cuda;
-  if (strcmp(vendor, "AMD") != 0) drivers &= ~(uint32_t) gpuinfo_driver_rocm;
-  if (strcmp(vendor, "Intel") != 0) drivers &= ~(uint32_t) gpuinfo_driver_level_zero;
+static gpuinfo_drivers_t
+gpuinfo__device_drivers(gpuinfo_drivers_t drivers, const char *vendor) {
+  if (strcmp(vendor, "NVIDIA") != 0) drivers.cuda = false;
+  if (strcmp(vendor, "AMD") != 0) drivers.rocm = false;
+  if (strcmp(vendor, "Intel") != 0) drivers.level_zero = false;
 
   return drivers;
 }
 
 static void
-gpuinfo__fill_static(gpuinfo_device_t *entry, const DXGI_ADAPTER_DESC1 &desc, uint32_t drivers) {
+gpuinfo__fill_static(gpuinfo_device_t *entry, const DXGI_ADAPTER_DESC1 &desc, gpuinfo_drivers_t drivers) {
   gpuinfo_gpu_t *gpu = &entry->info;
 
   WideCharToMultiByte(CP_UTF8, 0, desc.Description, -1, gpu->name, sizeof(gpu->name), NULL, NULL);
@@ -159,16 +159,16 @@ gpuinfo_init(gpuinfo_t **result) {
 
   if (info == NULL) return -1;
 
-  uint32_t drivers = 0;
+  gpuinfo_drivers_t drivers = {0};
 
-  if (gpuinfo__has_library("vulkan-1.dll")) drivers |= gpuinfo_driver_vulkan;
-  if (gpuinfo__has_library("OpenCL.dll")) drivers |= gpuinfo_driver_opencl;
-  if (gpuinfo__has_library("nvcuda.dll")) drivers |= gpuinfo_driver_cuda;
-  if (gpuinfo__has_library("ze_loader.dll")) drivers |= gpuinfo_driver_level_zero;
-  if (gpuinfo__has_library("amdhip64.dll")) drivers |= gpuinfo_driver_rocm;
-  if (gpuinfo__has_webgpu()) drivers |= gpuinfo_driver_webgpu;
+  drivers.vulkan = gpuinfo__has_library("vulkan-1.dll");
+  drivers.opencl = gpuinfo__has_library("OpenCL.dll");
+  drivers.cuda = gpuinfo__has_library("nvcuda.dll");
+  drivers.level_zero = gpuinfo__has_library("ze_loader.dll");
+  drivers.rocm = gpuinfo__has_library("amdhip64.dll");
+  drivers.webgpu = gpuinfo__has_webgpu();
 
-  if (gpuinfo_opengl_available()) drivers |= gpuinfo_driver_opengl;
+  drivers.opengl = gpuinfo_opengl_available();
 
   info->drivers = drivers;
 
@@ -235,16 +235,16 @@ gpuinfo_init(gpuinfo_t **result) {
       // Every hardware adapter DXGI enumerates supports Direct3D 11; the
       // software rasterizer has already been skipped. Direct3D support is a
       // per-adapter capability, so reflect it on the device and on the context.
-      entry->info.drivers |= gpuinfo_driver_direct3d11;
+      entry->info.drivers.direct3d11 = true;
 
-      info->drivers |= gpuinfo_driver_direct3d11;
+      info->drivers.direct3d11 = true;
 
       // Direct3D 12 requires a WDDM 2.0 driver, read passively from the
       // kernel-mode driver rather than probed by creating a device.
       if (gpuinfo_wddm_supports_d3d12(&wddm, entry->luid)) {
-        entry->info.drivers |= gpuinfo_driver_direct3d12;
+        entry->info.drivers.direct3d12 = true;
 
-        info->drivers |= gpuinfo_driver_direct3d12;
+        info->drivers.direct3d12 = true;
       }
 
       adapter->Release();
@@ -280,14 +280,11 @@ gpuinfo_destroy(gpuinfo_t *info) {
   free(info);
 }
 
-extern "C" uint32_t
-gpuinfo_drivers(const gpuinfo_t *info) {
-  return info->drivers;
-}
+extern "C" int
+gpuinfo_drivers(const gpuinfo_t *info, gpuinfo_drivers_t *result) {
+  *result = info->drivers;
 
-extern "C" bool
-gpuinfo_driver_available(const gpuinfo_t *info, gpuinfo_driver_t driver) {
-  return (info->drivers & (uint32_t) driver) != 0;
+  return 0;
 }
 
 extern "C" size_t
