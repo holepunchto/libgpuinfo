@@ -1,0 +1,23 @@
+{
+  "private": true,
+  "name": "libgpuinfo",
+  "scripts": {
+    "format": "prettier --write .",
+    "lint": "prettier --check ."
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/holepunchto/libgpuinfo.git"
+  },
+  "author": "Holepunch",
+  "license": "Apache-2.0",
+  "bugs": {
+    "url": "https://github.com/holepunchto/libgpuinfo/issues"
+  },
+  "homepage": "https://github.com/holepunchto/libgpuinfo#readme",
+  "devDependencies": {
+    "cmake-harden": "^1.1.0",
+    "prettier": "^3.8.3",
+    "prettier-config-holepunch": "^2.0.0"
+  }
+}
