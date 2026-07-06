@@ -298,7 +298,12 @@ gpuinfo_pdh_open(gpuinfo_pdh_t *pdh) {
   PdhCollectQueryData(pdh->query);
 
   pdh->ready = true;
-  pdh->last = GetTickCount64();
+
+  // Leave `last` at `0` so that the first utilization query forces a collection
+  // rather than being throttled. Otherwise the first sample would find no cached
+  // result and report the "unavailable" sentinel for a metric this platform can
+  // in fact measure, purely because too little time had elapsed since priming.
+  pdh->last = 0;
 
   return true;
 }
