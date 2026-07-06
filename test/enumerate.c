@@ -62,6 +62,17 @@ main() {
     err = gpuinfo_gpu_sample(info, i, &usage);
     assert(err == 0);
 
+    // Each utilization metric is either a valid reading in its documented range
+    // or exactly the negative sentinel for a metric this platform cannot
+    // determine; no other out-of-range value is permitted. In particular a
+    // measurable metric must not read as the sentinel merely because it was
+    // sampled soon after initialization.
+    assert(usage.compute <= 1.0 && (usage.compute >= 0.0 || usage.compute == -1.0));
+    assert(usage.encode <= 1.0 && (usage.encode >= 0.0 || usage.encode == -1.0));
+    assert(usage.decode <= 1.0 && (usage.decode >= 0.0 || usage.decode == -1.0));
+    assert(usage.power >= 0.0 || usage.power == -1.0);
+    assert(usage.temperature >= 0.0 || usage.temperature == -1.0);
+
     printf(
       "  [%zu] %s (%s), %s, %s%llu MiB\n",
       i,
