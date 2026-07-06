@@ -275,7 +275,7 @@ gpuinfo__fill_vendor(gpuinfo_gpu_t *gpu, uint64_t registry_id, NSString *name) {
   }
 
   // Fall back to inferring the vendor from the device name when the registry
-  // does not expose a recognized identifier, as is the case on Apple silicon.
+  // does not expose a recognized identifier.
   if (vendor == NULL) {
     NSString *lower = name.lowercaseString;
 
