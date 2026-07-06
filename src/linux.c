@@ -10,6 +10,7 @@
 
 #include "../include/gpuinfo.h"
 #include "linux/nvml.h"
+#include "posix.h"
 
 // Known PCI vendor identifiers, used to resolve a human-readable vendor name.
 #define GPUINFO_VENDOR_AMD    0x1002
@@ -165,23 +166,6 @@ gpuinfo__read_hwmon(const char *dir, const char *file, uint64_t *result) {
 }
 
 static bool
-gpuinfo__dlopen_any(const char *const *names) {
-  for (size_t i = 0; names[i] != NULL; i++) {
-    void *handle = dlopen(names[i], RTLD_LAZY | RTLD_LOCAL | RTLD_NOLOAD);
-
-    if (handle == NULL) handle = dlopen(names[i], RTLD_LAZY | RTLD_LOCAL);
-
-    if (handle != NULL) {
-      dlclose(handle);
-
-      return true;
-    }
-  }
-
-  return false;
-}
-
-static bool
 gpuinfo__has_vulkan(void) {
   static const char *const names[] = {"libvulkan.so.1", "libvulkan.so", NULL};
 
@@ -244,17 +228,6 @@ gpuinfo__has_webgpu(void) {
   };
 
   return gpuinfo__dlopen_any(names);
-}
-
-// Clear the vendor-specific compute APIs that do not apply to a device's
-// vendor, leaving the cross-vendor APIs untouched.
-static gpuinfo_drivers_t
-gpuinfo__device_drivers(gpuinfo_drivers_t drivers, const char *vendor) {
-  if (strcmp(vendor, "NVIDIA") != 0) drivers.cuda = false;
-  if (strcmp(vendor, "AMD") != 0) drivers.rocm = false;
-  if (strcmp(vendor, "Intel") != 0) drivers.level_zero = false;
-
-  return drivers;
 }
 
 // Look up a device name in the system PCI identifier database, if present. This
