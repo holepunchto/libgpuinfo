@@ -10,6 +10,7 @@
 #import <Metal/Metal.h>
 
 #include "../include/gpuinfo.h"
+#include "posix.h"
 
 // Introduced in the macOS 12 SDK; fall back to the older name when building
 // against an earlier SDK. The symbol is a constant rather than a macro, so the
@@ -67,26 +68,6 @@ gpuinfo__copy_string(char *dst, size_t cap, NSString *src) {
 }
 
 static bool
-gpuinfo__dlopen_any(const char *const *names) {
-  for (size_t i = 0; names[i] != NULL; i++) {
-    // Prefer a non-loading probe so that merely detecting a driver does not
-    // pull it into the process, but fall back to a full load if it is not
-    // already resident.
-    void *handle = dlopen(names[i], RTLD_LAZY | RTLD_LOCAL | RTLD_NOLOAD);
-
-    if (handle == NULL) handle = dlopen(names[i], RTLD_LAZY | RTLD_LOCAL);
-
-    if (handle != NULL) {
-      dlclose(handle);
-
-      return true;
-    }
-  }
-
-  return false;
-}
-
-static bool
 gpuinfo__has_vulkan(void) {
   static const char *const names[] = {
     "libvulkan.dylib",
@@ -132,17 +113,6 @@ gpuinfo__has_webgpu(void) {
   };
 
   return gpuinfo__dlopen_any(names);
-}
-
-// Clear the vendor-specific compute APIs that do not apply to a device's
-// vendor, leaving the cross-vendor APIs untouched.
-static gpuinfo_drivers_t
-gpuinfo__device_drivers(gpuinfo_drivers_t drivers, const char *vendor) {
-  if (strcmp(vendor, "NVIDIA") != 0) drivers.cuda = false;
-  if (strcmp(vendor, "AMD") != 0) drivers.rocm = false;
-  if (strcmp(vendor, "Intel") != 0) drivers.level_zero = false;
-
-  return drivers;
 }
 
 // Locate the IOKit accelerator service whose registry entry identifier matches
