@@ -8,18 +8,10 @@
 #import <Foundation/Foundation.h>
 #import <IOKit/IOKitLib.h>
 #import <Metal/Metal.h>
+#import <TargetConditionals.h>
 
 #include "../include/gpuinfo.h"
 #include "posix.h"
-
-// Introduced in the macOS 12 SDK; fall back to the older name when building
-// against an earlier SDK. The symbol is a constant rather than a macro, so the
-// SDK version has to be tested directly.
-#include <Availability.h>
-
-#if !defined(__MAC_OS_X_VERSION_MAX_ALLOWED) || __MAC_OS_X_VERSION_MAX_ALLOWED < 120000
-#define kIOMainPortDefault kIOMasterPortDefault
-#endif
 
 // Known PCI vendor identifiers, used to resolve a human-readable vendor name.
 #define GPUINFO_VENDOR_APPLE  0x106b
@@ -122,7 +114,16 @@ static io_service_t
 gpuinfo__accelerator_for_registry_id(uint64_t registry_id) {
   io_iterator_t iterator = 0;
 
-  kern_return_t status = IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching("IOAccelerator"), &iterator);
+  // `kIOMainPortDefault` was introduced in iOS 15 and macOS 12. On earlier
+  // systems the equivalent default port is `MACH_PORT_NULL`, which is the value
+  // the constant itself resolves to.
+  mach_port_t port = MACH_PORT_NULL;
+
+  if (@available(macOS 12.0, iOS 15.0, *)) {
+    port = kIOMainPortDefault;
+  }
+
+  kern_return_t status = IOServiceGetMatchingServices(port, IOServiceMatching("IOAccelerator"), &iterator);
 
   if (status != KERN_SUCCESS) return 0;
 
@@ -266,6 +267,7 @@ gpuinfo__fill_vendor(gpuinfo_gpu_t *gpu, uint64_t registry_id, NSString *name) {
 
 static gpuinfo_gpu_type_t
 gpuinfo__device_type(id<MTLDevice> device) {
+#if TARGET_OS_OSX
   switch (device.location) {
   case MTLDeviceLocationExternal:
     return gpuinfo_gpu_type_external;
@@ -281,6 +283,13 @@ gpuinfo__device_type(id<MTLDevice> device) {
   if (device.isLowPower) return gpuinfo_gpu_type_integrated;
 
   return gpuinfo_gpu_type_dedicated;
+#else
+  // On iOS, tvOS, and visionOS there is a single built-in GPU that shares its
+  // memory with the CPU. The device location and power-class properties used
+  // on macOS are unavailable there, so classify by unified-memory support
+  // alone.
+  return device.hasUnifiedMemory ? gpuinfo_gpu_type_integrated : gpuinfo_gpu_type_dedicated;
+#endif
 }
 
 static bool
@@ -305,7 +314,20 @@ gpuinfo_init(gpuinfo_t **result) {
   if (info == NULL) return -1;
 
   @autoreleasepool {
-    NSArray<id<MTLDevice>> *devices = MTLCopyAllDevices();
+    NSArray<id<MTLDevice>> *devices;
+
+    if (@available(macOS 10.11, iOS 18.0, *)) {
+      devices = MTLCopyAllDevices();
+    } else {
+      // Before iOS 18 there is no way to enumerate devices, but iOS exposes a
+      // single GPU. Wrap the default device in a retained array to match the
+      // release semantics of `MTLCopyAllDevices` used above.
+      id<MTLDevice> primary = MTLCreateSystemDefaultDevice();
+
+      devices = [(primary != nil ? @[ primary ] : @[]) retain];
+
+      [primary release];
+    }
 
     gpuinfo_drivers_t drivers = {0};
 
@@ -343,7 +365,16 @@ gpuinfo_init(gpuinfo_t **result) {
       gpuinfo__copy_string(gpu->name, sizeof(gpu->name), device.name);
 
       gpu->type = gpuinfo__device_type(device);
-      gpu->memory = device.recommendedMaxWorkingSetSize;
+
+      if (@available(macOS 10.12, iOS 16.0, *)) {
+        gpu->memory = device.recommendedMaxWorkingSetSize;
+      } else {
+        // `recommendedMaxWorkingSetSize` is only available from iOS 16. On a
+        // unified-memory device the physical memory is a reasonable proxy for
+        // the working set the GPU can address.
+        gpu->memory = [NSProcessInfo processInfo].physicalMemory;
+      }
+
       gpu->unified_memory = device.hasUnifiedMemory;
 
       gpuinfo__fill_vendor(gpu, entry->registry_id, device.name);
