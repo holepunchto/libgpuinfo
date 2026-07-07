@@ -37,7 +37,7 @@ if(APPLE)
       "-framework Metal"
       "-framework IOKit"
   )
-elseif(LINUX)
+elseif(LINUX OR ANDROID)
   target_sources(
     gpuinfo
     PRIVATE
