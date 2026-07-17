@@ -142,11 +142,11 @@ gpuinfo__fill_static(gpuinfo_device_t *entry, const DXGI_ADAPTER_DESC1 &desc, gp
   // graphics.
   if (desc.DedicatedVideoMemory > 0) {
     gpu->type = gpuinfo_gpu_type_dedicated;
-    gpu->memory = desc.DedicatedVideoMemory;
+    gpu->memory = (int64_t) desc.DedicatedVideoMemory;
     gpu->unified_memory = false;
   } else {
     gpu->type = gpuinfo_gpu_type_integrated;
-    gpu->memory = desc.SharedSystemMemory;
+    gpu->memory = (int64_t) desc.SharedSystemMemory;
     gpu->unified_memory = true;
   }
 
@@ -310,7 +310,7 @@ gpuinfo_gpu_sample(gpuinfo_t *info, size_t index, gpuinfo_usage_t *result) {
   result->compute = -1.0;
   result->encode = -1.0;
   result->decode = -1.0;
-  result->memory_used = 0;
+  result->memory_used = -1;
   result->memory_total = entry->info.memory;
   // Windows exposes no per-adapter power or temperature without a vendor SDK.
   result->power = -1.0;
@@ -322,11 +322,11 @@ gpuinfo_gpu_sample(gpuinfo_t *info, size_t index, gpuinfo_usage_t *result) {
     DXGI_QUERY_VIDEO_MEMORY_INFO memory;
 
     if (SUCCEEDED(entry->adapter->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &memory))) {
-      result->memory_used = memory.CurrentUsage;
+      result->memory_used = (int64_t) memory.CurrentUsage;
 
       // The budget is a better reflection of the memory actually available to
       // the process than the adapter's advertised total.
-      if (memory.Budget > 0) result->memory_total = memory.Budget;
+      if (memory.Budget > 0) result->memory_total = (int64_t) memory.Budget;
     }
   }
 

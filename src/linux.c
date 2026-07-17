@@ -374,7 +374,7 @@ gpuinfo__fill_static(gpuinfo_device_t *entry, gpuinfo_drivers_t drivers) {
 
   bool has_vram = gpuinfo__read_uint(entry->path, "mem_info_vram_total", &vram);
 
-  gpu->memory = vram;
+  gpu->memory = has_vram ? (int64_t) vram : -1;
 
   switch (vendor_id) {
   case GPUINFO_VENDOR_VIRTIO:
@@ -492,7 +492,7 @@ gpuinfo__nvml_match(gpuinfo_t *info) {
 
     uint64_t memory = gpuinfo_nvml_memory_total(&info->nvml, handle);
 
-    if (memory > 0) entry->info.memory = memory;
+    if (memory > 0) entry->info.memory = (int64_t) memory;
   }
 }
 
@@ -630,7 +630,7 @@ gpuinfo_gpu_sample(gpuinfo_t *info, size_t index, gpuinfo_usage_t *result) {
   result->compute = -1.0;
   result->encode = -1.0;
   result->decode = -1.0;
-  result->memory_used = 0;
+  result->memory_used = -1;
   result->memory_total = entry->info.memory;
   result->power = -1.0;
   result->temperature = -1.0;

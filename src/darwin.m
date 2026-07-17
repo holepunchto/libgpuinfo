@@ -367,12 +367,12 @@ gpuinfo_init(gpuinfo_t **result) {
       gpu->type = gpuinfo__device_type(device);
 
       if (@available(macOS 10.12, iOS 16.0, *)) {
-        gpu->memory = device.recommendedMaxWorkingSetSize;
+        gpu->memory = (int64_t) device.recommendedMaxWorkingSetSize;
       } else {
         // `recommendedMaxWorkingSetSize` is only available from iOS 16. On a
         // unified-memory device the physical memory is a reasonable proxy for
         // the working set the GPU can address.
-        gpu->memory = [NSProcessInfo processInfo].physicalMemory;
+        gpu->memory = (int64_t) [NSProcessInfo processInfo].physicalMemory;
       }
 
       gpu->unified_memory = device.hasUnifiedMemory;
@@ -434,7 +434,7 @@ gpuinfo_gpu_sample(gpuinfo_t *info, size_t index, gpuinfo_usage_t *result) {
   // these remain unknown on macOS.
   result->encode = -1.0;
   result->decode = -1.0;
-  result->memory_used = 0;
+  result->memory_used = -1;
   result->memory_total = entry->info.memory;
   result->power = -1.0;
   result->temperature = -1.0;
@@ -457,7 +457,7 @@ gpuinfo_gpu_sample(gpuinfo_t *info, size_t index, gpuinfo_usage_t *result) {
         uint64_t memory_used;
 
         if (gpuinfo__dict_number(dict, CFSTR("In use system memory"), &memory_used) || gpuinfo__dict_number(dict, CFSTR("vramUsedBytes"), &memory_used)) {
-          result->memory_used = memory_used;
+          result->memory_used = (int64_t) memory_used;
         }
       }
 
@@ -469,9 +469,9 @@ gpuinfo_gpu_sample(gpuinfo_t *info, size_t index, gpuinfo_usage_t *result) {
 
   // As a last resort, report the memory allocated by the current process when
   // the system-wide figure is unavailable.
-  if (result->memory_used == 0) {
+  if (result->memory_used < 0) {
     @autoreleasepool {
-      result->memory_used = entry->device.currentAllocatedSize;
+      result->memory_used = (int64_t) entry->device.currentAllocatedSize;
     }
   }
 

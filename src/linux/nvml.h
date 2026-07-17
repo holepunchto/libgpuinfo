@@ -192,7 +192,7 @@ gpuinfo_nvml_driver_version(const gpuinfo_nvml_t *nvml, char *dst, size_t cap) {
 // Read the runtime utilization of a device. Fields that cannot be determined
 // are left untouched, so the caller should initialize them first.
 static void
-gpuinfo_nvml_usage(const gpuinfo_nvml_t *nvml, nvmlDevice_t device, double *compute, double *encode, double *decode, uint64_t *memory_used, uint64_t *memory_total, double *power, double *temperature) {
+gpuinfo_nvml_usage(const gpuinfo_nvml_t *nvml, nvmlDevice_t device, double *compute, double *encode, double *decode, int64_t *memory_used, int64_t *memory_total, double *power, double *temperature) {
   if (nvml->get_utilization != NULL) {
     nvmlUtilization_t utilization;
 
@@ -215,8 +215,8 @@ gpuinfo_nvml_usage(const gpuinfo_nvml_t *nvml, nvmlDevice_t device, double *comp
     nvmlMemory_t memory;
 
     if (nvml->get_memory(device, &memory) == 0) {
-      *memory_used = memory.used;
-      *memory_total = memory.total;
+      *memory_used = (int64_t) memory.used;
+      *memory_total = (int64_t) memory.total;
     }
   }
 

@@ -150,9 +150,9 @@ struct gpuinfo_gpu_s {
 
   /**
    * The total amount of video memory available to the device, in bytes. For an
-   * integrated GPU this is the memory shared with the system. `0` if unknown.
+   * integrated GPU this is the memory shared with the system. `-1` if unknown.
    */
-  uint64_t memory;
+  int64_t memory;
 };
 
 /**
@@ -182,15 +182,15 @@ struct gpuinfo_usage_s {
   double decode;
 
   /**
-   * The amount of memory currently in use, in bytes.
+   * The amount of memory currently in use, in bytes. `-1` if unknown.
    */
-  uint64_t memory_used;
+  int64_t memory_used;
 
   /**
-   * The total amount of memory available to the device, in bytes. `0` if
+   * The total amount of memory available to the device, in bytes. `-1` if
    * unknown.
    */
-  uint64_t memory_total;
+  int64_t memory_total;
 
   /**
    * The instantaneous power draw of the device, in watts. A negative value
