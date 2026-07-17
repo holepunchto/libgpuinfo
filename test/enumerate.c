@@ -3,6 +3,19 @@
 
 #include "../include/gpuinfo.h"
 
+// Format a byte count as whole MiB into the given buffer, rendering the `-1`
+// unknown sentinel as "?". Returns the buffer for convenient inline use.
+static const char *
+mib(char *dst, size_t cap, int64_t bytes) {
+  if (bytes < 0) {
+    snprintf(dst, cap, "?");
+  } else {
+    snprintf(dst, cap, "%llu", (unsigned long long) (bytes / (1024 * 1024)));
+  }
+
+  return dst;
+}
+
 static const char *
 type_name(gpuinfo_gpu_type_t type) {
   switch (type) {
@@ -73,14 +86,23 @@ main() {
     assert(usage.power >= 0.0 || usage.power == -1.0);
     assert(usage.temperature >= 0.0 || usage.temperature == -1.0);
 
+    // Each memory figure is either a genuine byte count, including a genuine
+    // zero, or exactly `-1` where it could not be determined; no other negative
+    // value is permitted.
+    assert(gpu.memory >= 0 || gpu.memory == -1);
+    assert(usage.memory_used >= 0 || usage.memory_used == -1);
+    assert(usage.memory_total >= 0 || usage.memory_total == -1);
+
+    char buf[32];
+
     printf(
-      "  [%zu] %s (%s), %s, %s%llu MiB\n",
+      "  [%zu] %s (%s), %s, %s%s MiB\n",
       i,
       gpu.name,
       gpu.vendor,
       type_name(gpu.type),
       gpu.unified_memory ? "unified, " : "",
-      (unsigned long long) (gpu.memory / (1024 * 1024))
+      mib(buf, sizeof(buf), gpu.memory)
     );
 
     printf(
@@ -99,11 +121,13 @@ main() {
       );
     }
 
+    char used[32], total[32];
+
     printf(
-      "      compute: %.1f%%, memory: %llu / %llu MiB\n",
+      "      compute: %.1f%%, memory: %s / %s MiB\n",
       usage.compute < 0 ? 0.0 : usage.compute * 100.0,
-      (unsigned long long) (usage.memory_used / (1024 * 1024)),
-      (unsigned long long) (usage.memory_total / (1024 * 1024))
+      mib(used, sizeof(used), usage.memory_used),
+      mib(total, sizeof(total), usage.memory_total)
     );
 
     if (usage.encode >= 0 || usage.decode >= 0) {
