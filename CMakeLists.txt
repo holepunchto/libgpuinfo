@@ -37,7 +37,19 @@ if(APPLE)
       "-framework Metal"
       "-framework IOKit"
   )
-elseif(LINUX OR ANDROID)
+elseif(ANDROID)
+  target_sources(
+    gpuinfo
+    PRIVATE
+      src/android.c
+  )
+
+  target_link_libraries(
+    gpuinfo
+    PUBLIC
+      ${CMAKE_DL_LIBS}
+  )
+elseif(LINUX)
   target_sources(
     gpuinfo
     PRIVATE
