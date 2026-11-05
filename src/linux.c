@@ -35,6 +35,9 @@ struct gpuinfo_device_s {
   // device is not an NVIDIA GPU.
   nvmlDevice_t nvml;
 
+  // Whether the device is an AMD APU.
+  bool apu;
+
   // The static information reported to the caller.
   gpuinfo_gpu_t info;
 };
@@ -129,11 +132,11 @@ gpuinfo__driver_name(const char *dir, char *dst, size_t cap) {
   dst[cap - 1] = '\0';
 }
 
-// Read a hwmon sensor exposed under a device's sysfs directory. Each device has
-// at most one hwmon instance, named "hwmonN" for an unpredictable N, so the
+// Resolve the hwmon instance exposed under a device's sysfs directory. Each
+// device has at most one, named "hwmonN" for an unpredictable N, so the
 // directory is scanned for the first match.
 static bool
-gpuinfo__read_hwmon(const char *dir, const char *file, uint64_t *result) {
+gpuinfo__hwmon_dir(const char *dir, char *dst, size_t cap) {
   char hwmon_dir[512];
 
   snprintf(hwmon_dir, sizeof(hwmon_dir), "%s/hwmon", dir);
@@ -149,20 +152,32 @@ gpuinfo__read_hwmon(const char *dir, const char *file, uint64_t *result) {
   while ((entry = readdir(d)) != NULL) {
     if (strncmp(entry->d_name, "hwmon", 5) != 0) continue;
 
-    char instance[768];
+    snprintf(dst, cap, "%s/%s", hwmon_dir, entry->d_name);
 
-    snprintf(instance, sizeof(instance), "%s/%s", hwmon_dir, entry->d_name);
+    found = true;
 
-    if (gpuinfo__read_uint(instance, file, result)) {
-      found = true;
-
-      break;
-    }
+    break;
   }
 
   closedir(d);
 
   return found;
+}
+
+static bool
+gpuinfo__read_hwmon(const char *dir, const char *file, uint64_t *result) {
+  char hwmon[768];
+
+  return gpuinfo__hwmon_dir(dir, hwmon, sizeof(hwmon)) && gpuinfo__read_uint(hwmon, file, result);
+}
+
+// amdgpu only exposes the "vddnb" voltage sensor on APUs.
+static bool
+gpuinfo__is_apu(const char *dir) {
+  char hwmon[768];
+  char label[16];
+
+  return gpuinfo__hwmon_dir(dir, hwmon, sizeof(hwmon)) && gpuinfo__read_string(hwmon, "in1_label", label, sizeof(label)) && strcmp(label, "vddnb") == 0;
 }
 
 static bool
@@ -376,6 +391,18 @@ gpuinfo__fill_static(gpuinfo_device_t *entry, gpuinfo_drivers_t drivers) {
 
   gpu->memory = has_vram ? (int64_t) vram : -1;
 
+  // On an APU, the VRAM is only a small carve-out of system memory and most
+  // memory is instead GTT.
+  entry->apu = has_vram && gpuinfo__is_apu(entry->path);
+
+  if (entry->apu) {
+    uint64_t gtt = 0;
+
+    gpuinfo__read_uint(entry->path, "mem_info_gtt_total", &gtt);
+
+    gpu->memory = (int64_t) (vram + gtt);
+  }
+
   switch (vendor_id) {
   case GPUINFO_VENDOR_VIRTIO:
   case GPUINFO_VENDOR_VMWARE:
@@ -384,7 +411,7 @@ gpuinfo__fill_static(gpuinfo_device_t *entry, gpuinfo_drivers_t drivers) {
     gpu->type = gpuinfo_gpu_type_virtual;
     break;
   default:
-    gpu->type = (has_vram && vram > 0) ? gpuinfo_gpu_type_dedicated : gpuinfo_gpu_type_integrated;
+    gpu->type = (has_vram && vram > 0 && !entry->apu) ? gpuinfo_gpu_type_dedicated : gpuinfo_gpu_type_integrated;
   }
 
   // An integrated GPU shares a single memory address space with the CPU.
@@ -654,6 +681,12 @@ gpuinfo_gpu_sample(gpuinfo_t *info, size_t index, gpuinfo_usage_t *result) {
   uint64_t used;
 
   if (gpuinfo__read_uint(entry->path, "mem_info_vram_used", &used)) {
+    uint64_t gtt_used;
+
+    if (entry->apu && gpuinfo__read_uint(entry->path, "mem_info_gtt_used", &gtt_used)) {
+      used += gtt_used;
+    }
+
     result->memory_used = used;
   }
 
