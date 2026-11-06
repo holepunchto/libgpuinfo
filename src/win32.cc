@@ -9,6 +9,7 @@
 
 #include "../include/gpuinfo.h"
 #include "win32/driver.h"
+#include "win32/dxcore.h"
 #include "win32/opengl.h"
 #include "win32/pdh.h"
 #include "win32/wddm.h"
@@ -93,7 +94,7 @@ gpuinfo__device_drivers(gpuinfo_drivers_t drivers, const char *vendor) {
 }
 
 static void
-gpuinfo__fill_static(gpuinfo_device_t *entry, const DXGI_ADAPTER_DESC1 &desc, gpuinfo_drivers_t drivers) {
+gpuinfo__fill_static(gpuinfo_device_t *entry, const DXGI_ADAPTER_DESC1 &desc, const gpuinfo_dxcore_t *dxcore, gpuinfo_drivers_t drivers) {
   gpuinfo_gpu_t *gpu = &entry->info;
 
   WideCharToMultiByte(CP_UTF8, 0, desc.Description, -1, gpu->name, sizeof(gpu->name), NULL, NULL);
@@ -136,18 +137,25 @@ gpuinfo__fill_static(gpuinfo_device_t *entry, const DXGI_ADAPTER_DESC1 &desc, gp
 
   gpuinfo_driver_version(desc.VendorId, desc.DeviceId, gpu->driver_version, sizeof(gpu->driver_version));
 
-  // An adapter with dedicated video memory is a discrete GPU; one that draws
-  // only on shared system memory is integrated. This holds regardless of
-  // vendor, including Intel's discrete Arc parts as much as its integrated
-  // graphics.
-  if (desc.DedicatedVideoMemory > 0) {
+  // Without DXCore, fall back to treating an adapter with dedicated video
+  // memory as discrete. This misclassifies integrated GPUs that report a
+  // carve-out as dedicated video memory, as AMD APUs do.
+  bool integrated;
+
+  if (!gpuinfo_dxcore_is_integrated(dxcore, desc.AdapterLuid, &integrated)) {
+    integrated = desc.DedicatedVideoMemory == 0;
+  }
+
+  gpu->dedicated_memory = (int64_t) desc.DedicatedVideoMemory;
+
+  if (integrated) {
+    gpu->type = gpuinfo_gpu_type_integrated;
+    gpu->memory = (int64_t) (desc.DedicatedVideoMemory + desc.SharedSystemMemory);
+    gpu->unified_memory = true;
+  } else {
     gpu->type = gpuinfo_gpu_type_dedicated;
     gpu->memory = (int64_t) desc.DedicatedVideoMemory;
     gpu->unified_memory = false;
-  } else {
-    gpu->type = gpuinfo_gpu_type_integrated;
-    gpu->memory = (int64_t) desc.SharedSystemMemory;
-    gpu->unified_memory = true;
   }
 
   gpu->drivers = gpuinfo__device_drivers(drivers, gpu->vendor);
@@ -209,6 +217,10 @@ gpuinfo_init(gpuinfo_t **result) {
 
     gpuinfo_wddm_open(&wddm);
 
+    gpuinfo_dxcore_t dxcore;
+
+    gpuinfo_dxcore_open(&dxcore);
+
     size_t index = 0;
 
     for (UINT i = 0; factory->EnumAdapters1(i, &adapter) != DXGI_ERROR_NOT_FOUND && index < count; i++) {
@@ -230,7 +242,7 @@ gpuinfo_init(gpuinfo_t **result) {
         entry->adapter = NULL;
       }
 
-      gpuinfo__fill_static(entry, desc, drivers);
+      gpuinfo__fill_static(entry, desc, &dxcore, drivers);
 
       // Every hardware adapter DXGI enumerates supports Direct3D 11; the
       // software rasterizer has already been skipped. Direct3D support is a
@@ -252,6 +264,7 @@ gpuinfo_init(gpuinfo_t **result) {
       index++;
     }
 
+    gpuinfo_dxcore_close(&dxcore);
     gpuinfo_wddm_close(&wddm);
 
     info->gpu_count = index;
@@ -301,6 +314,36 @@ gpuinfo_gpu_query(const gpuinfo_t *info, size_t index, gpuinfo_gpu_t *result) {
   return 0;
 }
 
+// Fall back to the memory usage reported by DXGI, which only covers the current
+// process. An integrated GPU may report its memory in either segment group,
+// so both are summed, but the dedicated part of it is then unknown.
+static void
+gpuinfo__sample_dxgi(gpuinfo_device_t *entry, bool integrated, gpuinfo_usage_t *result) {
+  if (entry->adapter == NULL) return;
+
+  DXGI_QUERY_VIDEO_MEMORY_INFO local;
+
+  if (FAILED(entry->adapter->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &local))) return;
+
+  uint64_t used = local.CurrentUsage;
+  uint64_t budget = local.Budget;
+
+  DXGI_QUERY_VIDEO_MEMORY_INFO non_local;
+
+  if (integrated && SUCCEEDED(entry->adapter->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_NON_LOCAL, &non_local))) {
+    used += non_local.CurrentUsage;
+    budget += non_local.Budget;
+  }
+
+  result->memory_used = (int64_t) used;
+
+  if (!integrated) result->dedicated_memory_used = (int64_t) used;
+
+  // The budget is a better reflection of the memory actually available to the
+  // process than the adapter's advertised total.
+  if (budget > 0) result->memory_total = (int64_t) budget;
+}
+
 extern "C" int
 gpuinfo_gpu_sample(gpuinfo_t *info, size_t index, gpuinfo_usage_t *result) {
   if (index >= info->gpu_count) return -1;
@@ -312,22 +355,25 @@ gpuinfo_gpu_sample(gpuinfo_t *info, size_t index, gpuinfo_usage_t *result) {
   result->decode = -1.0;
   result->memory_used = -1;
   result->memory_total = entry->info.memory;
+  result->dedicated_memory_used = -1;
   // Windows exposes no per-adapter power or temperature without a vendor SDK.
   result->power = -1.0;
   result->temperature = -1.0;
 
   gpuinfo_pdh_utilization(&info->pdh, entry->luid, &result->compute, &result->encode, &result->decode);
 
-  if (entry->adapter != NULL) {
-    DXGI_QUERY_VIDEO_MEMORY_INFO memory;
+  bool integrated = entry->info.type == gpuinfo_gpu_type_integrated;
 
-    if (SUCCEEDED(entry->adapter->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &memory))) {
-      result->memory_used = (int64_t) memory.CurrentUsage;
+  int64_t dedicated, shared;
 
-      // The budget is a better reflection of the memory actually available to
-      // the process than the adapter's advertised total.
-      if (memory.Budget > 0) result->memory_total = (int64_t) memory.Budget;
-    }
+  if (gpuinfo_pdh_memory(&info->pdh, entry->luid, &dedicated, &shared)) {
+    result->dedicated_memory_used = dedicated;
+
+    // A discrete GPU may also spill into shared system memory, but that is not
+    // a part of the memory reported for it.
+    result->memory_used = integrated ? dedicated + shared : dedicated;
+  } else {
+    gpuinfo__sample_dxgi(entry, integrated, result);
   }
 
   return 0;
