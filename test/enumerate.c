@@ -92,17 +92,25 @@ main() {
     assert(gpu.memory >= 0 || gpu.memory == -1);
     assert(usage.memory_used >= 0 || usage.memory_used == -1);
     assert(usage.memory_total >= 0 || usage.memory_total == -1);
+    assert(gpu.dedicated_memory >= 0 || gpu.dedicated_memory == -1);
+    assert(usage.dedicated_memory_used >= 0 || usage.dedicated_memory_used == -1);
 
-    char buf[32];
+    // The dedicated memory is a part of the total rather than an addition to
+    // it, whenever both are known.
+    assert(gpu.dedicated_memory == -1 || gpu.memory == -1 || gpu.dedicated_memory <= gpu.memory);
+    assert(usage.dedicated_memory_used == -1 || usage.memory_used == -1 || usage.dedicated_memory_used <= usage.memory_used);
+
+    char buf[32], dedicated[32];
 
     printf(
-      "  [%zu] %s (%s), %s, %s%s MiB\n",
+      "  [%zu] %s (%s), %s, %s%s MiB (%s MiB dedicated)\n",
       i,
       gpu.name,
       gpu.vendor,
       type_name(gpu.type),
       gpu.unified_memory ? "unified, " : "",
-      mib(buf, sizeof(buf), gpu.memory)
+      mib(buf, sizeof(buf), gpu.memory),
+      mib(dedicated, sizeof(dedicated), gpu.dedicated_memory)
     );
 
     printf(
@@ -121,13 +129,14 @@ main() {
       );
     }
 
-    char used[32], total[32];
+    char used[32], total[32], dedicated_used[32];
 
     printf(
-      "      compute: %.1f%%, memory: %s / %s MiB\n",
+      "      compute: %.1f%%, memory: %s / %s MiB (%s MiB dedicated)\n",
       usage.compute < 0 ? 0.0 : usage.compute * 100.0,
       mib(used, sizeof(used), usage.memory_used),
-      mib(total, sizeof(total), usage.memory_total)
+      mib(total, sizeof(total), usage.memory_total),
+      mib(dedicated_used, sizeof(dedicated_used), usage.dedicated_memory_used)
     );
 
     if (usage.encode >= 0 || usage.decode >= 0) {

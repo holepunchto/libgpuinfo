@@ -211,6 +211,7 @@ gpuinfo__from_vulkan(gpuinfo_gpu_t *gpu, const gpuinfo_vulkan_device_t *vk, int6
   // typically the shared system pool. Fall back to the total system memory when
   // the driver reports no device-local heap.
   gpu->memory = vk->memory > 0 ? (int64_t) vk->memory : system_memory;
+  gpu->dedicated_memory = -1;
 
   gpu->drivers = gpuinfo__device_drivers(drivers, gpu->vendor);
 }
@@ -259,6 +260,7 @@ gpuinfo__from_properties(gpuinfo_gpu_t *gpu, int64_t system_memory, gpuinfo_driv
   gpu->type = gpuinfo_gpu_type_integrated;
   gpu->unified_memory = true;
   gpu->memory = system_memory;
+  gpu->dedicated_memory = -1;
 
   gpu->drivers = gpuinfo__device_drivers(drivers, gpu->vendor);
 }
@@ -424,6 +426,7 @@ gpuinfo_gpu_sample(gpuinfo_t *info, size_t index, gpuinfo_usage_t *result) {
   result->decode = -1.0;
   result->memory_used = -1;
   result->memory_total = gpu->memory;
+  result->dedicated_memory_used = -1;
   result->power = -1.0;
   result->temperature = -1.0;
 

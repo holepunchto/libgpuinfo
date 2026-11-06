@@ -379,6 +379,16 @@ gpuinfo_init(gpuinfo_t **result) {
 
       gpuinfo__fill_vendor(gpu, entry->registry_id, device.name);
 
+      // Apple GPUs draw on unified memory with no carve-out, whereas the
+      // carve-out of an Intel integrated GPU is not exposed through Metal.
+      if (!gpu->unified_memory) {
+        gpu->dedicated_memory = gpu->memory;
+      } else if (strcmp(gpu->vendor, "Apple") == 0) {
+        gpu->dedicated_memory = 0;
+      } else {
+        gpu->dedicated_memory = -1;
+      }
+
       gpu->drivers = gpuinfo__device_drivers(drivers, gpu->vendor);
     }
 
@@ -436,6 +446,7 @@ gpuinfo_gpu_sample(gpuinfo_t *info, size_t index, gpuinfo_usage_t *result) {
   result->decode = -1.0;
   result->memory_used = -1;
   result->memory_total = entry->info.memory;
+  result->dedicated_memory_used = -1;
   result->power = -1.0;
   result->temperature = -1.0;
 
@@ -458,6 +469,8 @@ gpuinfo_gpu_sample(gpuinfo_t *info, size_t index, gpuinfo_usage_t *result) {
 
         if (gpuinfo__dict_number(dict, CFSTR("In use system memory"), &memory_used) || gpuinfo__dict_number(dict, CFSTR("vramUsedBytes"), &memory_used)) {
           result->memory_used = (int64_t) memory_used;
+
+          if (!entry->info.unified_memory) result->dedicated_memory_used = result->memory_used;
         }
       }
 
@@ -474,6 +487,8 @@ gpuinfo_gpu_sample(gpuinfo_t *info, size_t index, gpuinfo_usage_t *result) {
       result->memory_used = (int64_t) entry->device.currentAllocatedSize;
     }
   }
+
+  if (entry->info.dedicated_memory == 0) result->dedicated_memory_used = 0;
 
   return 0;
 }

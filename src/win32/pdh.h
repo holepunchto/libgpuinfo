@@ -1,11 +1,13 @@
 #ifndef GPUINFO_WIN32_PDH_H
 #define GPUINFO_WIN32_PDH_H
 
-// Runtime binding to the PDH "GPU Engine" performance counters. Compute
-// utilization is derived per adapter LUID as the busiest engine type, summed
-// across processes, matching the figure Task Manager reports. Utilization is a
-// rate, so a query holds the previous sample; collections are throttled so that
-// querying several adapters in quick succession share one sampling interval.
+// Runtime binding to the PDH "GPU Engine" and "GPU Adapter Memory" performance
+// counters. Compute utilization is derived per adapter LUID as the busiest
+// engine type, summed across processes, and memory usage is split into the
+// dedicated and shared figures, both matching what Task Manager reports.
+// Utilization is a rate, so a query holds the previous sample; collections are
+// throttled so that querying several adapters in quick succession share one
+// sampling interval.
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -54,6 +56,10 @@ struct gpuinfo_pdh_s {
   PDH_HQUERY query;
   PDH_HCOUNTER counter;
   bool ready;
+
+  // The adapter memory counters, both `NULL` if unavailable.
+  PDH_HCOUNTER dedicated_usage;
+  PDH_HCOUNTER shared_usage;
 
   // The tick count at the previous collection, `0` if none.
   ULONGLONG last;
@@ -293,6 +299,11 @@ gpuinfo_pdh_open(gpuinfo_pdh_t *pdh) {
     return false;
   }
 
+  if (PdhAddEnglishCounterW(pdh->query, L"\\GPU Adapter Memory(*)\\Dedicated Usage", 0, &pdh->dedicated_usage) != ERROR_SUCCESS || PdhAddEnglishCounterW(pdh->query, L"\\GPU Adapter Memory(*)\\Shared Usage", 0, &pdh->shared_usage) != ERROR_SUCCESS) {
+    pdh->dedicated_usage = NULL;
+    pdh->shared_usage = NULL;
+  }
+
   // Prime the query so that the first collection has a prior sample to compare
   // against.
   PdhCollectQueryData(pdh->query);
@@ -308,6 +319,72 @@ gpuinfo_pdh_open(gpuinfo_pdh_t *pdh) {
   return true;
 }
 
+static void
+gpuinfo_pdh__update(gpuinfo_pdh_t *pdh) {
+  ULONGLONG now = GetTickCount64();
+
+  if (pdh->last == 0 || now - pdh->last >= GPUINFO_PDH_INTERVAL) {
+    gpuinfo_pdh__refresh(pdh);
+
+    pdh->last = now;
+  }
+}
+
+// Sum the values, in bytes, of an adapter memory counter across the instances
+// belonging to the adapter with the given LUID, of which there is one per
+// physical adapter. Returns `-1` if no instance belongs to the adapter.
+static int64_t
+gpuinfo_pdh__memory(PDH_HCOUNTER counter, LUID luid) {
+  DWORD size = 0;
+  DWORD count = 0;
+
+  if (PdhGetFormattedCounterArrayW(counter, PDH_FMT_LARGE, &size, &count, NULL) != PDH_MORE_DATA) return -1;
+
+  PDH_FMT_COUNTERVALUE_ITEM_W *items = (PDH_FMT_COUNTERVALUE_ITEM_W *) malloc(size);
+
+  if (items == NULL) return -1;
+
+  int64_t total = -1;
+
+  if (PdhGetFormattedCounterArrayW(counter, PDH_FMT_LARGE, &size, &count, items) == ERROR_SUCCESS) {
+    for (DWORD i = 0; i < count; i++) {
+      if (items[i].FmtValue.CStatus != PDH_CSTATUS_VALID_DATA && items[i].FmtValue.CStatus != PDH_CSTATUS_NEW_DATA) continue;
+
+      LUID instance;
+
+      if (!gpuinfo_pdh__parse_luid(items[i].szName, &instance) || !gpuinfo_pdh__luid_equal(instance, luid)) continue;
+
+      if (total < 0) total = 0;
+
+      total += items[i].FmtValue.largeValue;
+    }
+  }
+
+  free(items);
+
+  return total;
+}
+
+// Get the dedicated and shared memory, in bytes, currently in use on the
+// adapter with the given LUID across all processes. Returns `false` if either
+// cannot be determined, leaving both untouched.
+static bool
+gpuinfo_pdh_memory(gpuinfo_pdh_t *pdh, LUID luid, int64_t *dedicated, int64_t *shared) {
+  if (!pdh->ready || pdh->dedicated_usage == NULL) return false;
+
+  gpuinfo_pdh__update(pdh);
+
+  int64_t dedicated_usage = gpuinfo_pdh__memory(pdh->dedicated_usage, luid);
+  int64_t shared_usage = gpuinfo_pdh__memory(pdh->shared_usage, luid);
+
+  if (dedicated_usage < 0 || shared_usage < 0) return false;
+
+  *dedicated = dedicated_usage;
+  *shared = shared_usage;
+
+  return true;
+}
+
 // Fill the compute, encode, and decode utilization of the adapter with the
 // given LUID, each in the range `[0, 1]`, or leave a value negative if it
 // cannot be determined. Collections are throttled, so querying several adapters
@@ -317,13 +394,7 @@ static void
 gpuinfo_pdh_utilization(gpuinfo_pdh_t *pdh, LUID luid, double *compute, double *encode, double *decode) {
   if (!pdh->ready) return;
 
-  ULONGLONG now = GetTickCount64();
-
-  if (pdh->last == 0 || now - pdh->last >= GPUINFO_PDH_INTERVAL) {
-    gpuinfo_pdh__refresh(pdh);
-
-    pdh->last = now;
-  }
+  gpuinfo_pdh__update(pdh);
 
   for (size_t i = 0; i < pdh->count; i++) {
     if (gpuinfo_pdh__luid_equal(pdh->results[i].luid, luid)) {

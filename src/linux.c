@@ -390,6 +390,7 @@ gpuinfo__fill_static(gpuinfo_device_t *entry, gpuinfo_drivers_t drivers) {
   bool has_vram = gpuinfo__read_uint(entry->path, "mem_info_vram_total", &vram);
 
   gpu->memory = has_vram ? (int64_t) vram : -1;
+  gpu->dedicated_memory = gpu->memory;
 
   // On an APU, the VRAM is only a small carve-out of system memory and most
   // memory is instead GTT.
@@ -519,7 +520,10 @@ gpuinfo__nvml_match(gpuinfo_t *info) {
 
     uint64_t memory = gpuinfo_nvml_memory_total(&info->nvml, handle);
 
-    if (memory > 0) entry->info.memory = (int64_t) memory;
+    if (memory > 0) {
+      entry->info.memory = (int64_t) memory;
+      entry->info.dedicated_memory = (int64_t) memory;
+    }
   }
 }
 
@@ -659,12 +663,15 @@ gpuinfo_gpu_sample(gpuinfo_t *info, size_t index, gpuinfo_usage_t *result) {
   result->decode = -1.0;
   result->memory_used = -1;
   result->memory_total = entry->info.memory;
+  result->dedicated_memory_used = -1;
   result->power = -1.0;
   result->temperature = -1.0;
 
   // NVIDIA GPUs report utilization and memory through NVML rather than sysfs.
   if (entry->nvml != NULL && info->nvml.ready) {
     gpuinfo_nvml_usage(&info->nvml, entry->nvml, &result->compute, &result->encode, &result->decode, &result->memory_used, &result->memory_total, &result->power, &result->temperature);
+
+    result->dedicated_memory_used = result->memory_used;
 
     return 0;
   }
@@ -681,6 +688,8 @@ gpuinfo_gpu_sample(gpuinfo_t *info, size_t index, gpuinfo_usage_t *result) {
   uint64_t used;
 
   if (gpuinfo__read_uint(entry->path, "mem_info_vram_used", &used)) {
+    result->dedicated_memory_used = (int64_t) used;
+
     uint64_t gtt_used;
 
     if (entry->apu && gpuinfo__read_uint(entry->path, "mem_info_gtt_used", &gtt_used)) {

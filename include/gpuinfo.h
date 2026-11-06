@@ -150,9 +150,18 @@ struct gpuinfo_gpu_s {
 
   /**
    * The total amount of video memory available to the device, in bytes. For an
-   * integrated GPU this is the memory shared with the system. `-1` if unknown.
+   * integrated GPU this is the memory shared with the system, including any
+   * dedicated carve-out. `-1` if unknown.
    */
   int64_t memory;
+
+  /**
+   * The amount of video memory dedicated to the device, in bytes, as a part of
+   * `memory`. For a discrete GPU this equals `memory`. For an integrated GPU it
+   * is the carve-out of system memory reserved for the device, which is `0`
+   * when there is none. `-1` if unknown.
+   */
+  int64_t dedicated_memory;
 };
 
 /**
@@ -191,6 +200,12 @@ struct gpuinfo_usage_s {
    * unknown.
    */
   int64_t memory_total;
+
+  /**
+   * The amount of dedicated video memory currently in use, in bytes, as a part
+   * of `memory_used`. See `gpuinfo_gpu_t.dedicated_memory`. `-1` if unknown.
+   */
+  int64_t dedicated_memory_used;
 
   /**
    * The instantaneous power draw of the device, in watts. A negative value
